@@ -1,6 +1,6 @@
-# 餐账 · Restaurant Expense Tracker
+# Restaurant Ledger · Restaurant Expense Tracker
 
-A Chinese-language, mobile-friendly browser app for one restaurant. Staff enter
+An English-language, mobile-friendly browser app for one restaurant. Staff enter
 their purchases; managers see all restaurant purchases. Amounts are in Malaysian
 ringgit, with calendar dates based on Asia/Kuching.
 

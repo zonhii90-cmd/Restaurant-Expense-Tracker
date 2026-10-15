@@ -37,12 +37,20 @@ test('entry validates quantity, monetary precision, and required fields', () => 
 });
 test('real Excel file contains detail and correctly calculated reports; text cannot become a formula', async () => {
   const workbook = new ExcelJS.Workbook();
-  const buffer = await createWorkbook([...lines, { ...base, id: 'l4', item_id: 'i2', item_name: '=HYPERLINK("https://example.com")', quantity: 1, total_amount: 0 }], '2026-10');
+  const buffer = await createWorkbook([...lines,
+    { ...base, id: 'l4', item_id: 'i2', item_name: '=HYPERLINK("https://example.com")', quantity: 1, total_amount: 0 },
+    { ...base, id: 'l5', item_id: 'i3', item_name: '食用油', supplier_name: '供应商 A', quantity: 0.5, total_amount: 0 },
+  ], '2026-10');
   await workbook.xlsx.load(buffer);
-  assert.deepEqual(workbook.worksheets.map(s => s.name), ['采购明细', '商品汇总', '供应商汇总']);
-  const detail = workbook.getWorksheet('采购明细')!;
-  assert.equal(detail.rowCount, 5);
+  assert.deepEqual(workbook.worksheets.map(s => s.name), ['Purchase details', 'Item summary', 'Supplier summary']);
+  const detail = workbook.getWorksheet('Purchase details')!;
+  assert.equal(detail.rowCount, 6);
+  assert.equal(detail.getCell('A1').value, 'Date');
+  assert.equal(detail.getCell('D1').value, 'Item');
   assert.equal(detail.getCell('D5').type, ExcelJS.ValueType.String);
   assert.equal(detail.getCell('G2').value, 180);
-  assert.equal(workbook.getWorksheet('商品汇总')!.getCell('D2').value, 450);
+  assert.equal(detail.getCell('D6').value, '食用油');
+  assert.equal(detail.getCell('B6').value, '供应商 A');
+  assert.equal(detail.getCell('E6').numFmt, '#,##0.###');
+  assert.equal(workbook.getWorksheet('Item summary')!.getCell('D2').value, 450);
 });

@@ -16,8 +16,8 @@ export const supabase = configured ? createClient(url!, key!) : null;
 
 export function friendlyError(error: unknown) {
   const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
-  if (['PGRST202', '42883', '42703'].includes(code)) return '数据库还需要更新保存功能。请联系管理员完成数据库设置。';
-  if (code === '42501') return '账号没有操作权限，请联系管理员确认账号已启用。';
-  if (error instanceof TypeError) return '暂时无法连接。请检查网络后重试；如刚才在保存，请先刷新记录确认是否已保存。';
-  return '操作未完成，请重试。如仍有问题，请联系管理员。';
+  if (['PGRST202', '42883', '42703'].includes(code)) return 'Purchase saving has not been set up yet. Please contact your administrator to finish database setup.';
+  if (code === '42501') return 'You do not have permission. Please ask your administrator to confirm that your account is active.';
+  if (error instanceof TypeError) return 'Unable to connect. Check your internet connection and try again. If you were saving, refresh the records first to check whether the invoice was saved.';
+  return 'The operation could not be completed. Please try again or contact your administrator.';
 }

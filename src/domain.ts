@@ -1,8 +1,8 @@
 export const UNITS = [
-  ['kg', '公斤 kg'], ['g', '克 g'], ['litre', '公升 litre'], ['ml', '毫升 ml'],
-  ['tin', '罐 tin'], ['carton', '箱 carton'], ['bag', '袋 bag'],
-  ['bottle', '瓶 bottle'], ['pack', '包 pack'], ['piece', '个 piece'],
-  ['tray', '托 tray'], ['box', '盒 box'],
+  ['kg', 'kg'], ['g', 'g'], ['litre', 'litre'], ['ml', 'ml'],
+  ['tin', 'tin'], ['carton', 'carton'], ['bag', 'bag'],
+  ['bottle', 'bottle'], ['pack', 'pack'], ['piece', 'piece'],
+  ['tray', 'tray'], ['box', 'box'],
 ] as const;
 
 export type Unit = typeof UNITS[number][0];
@@ -24,9 +24,16 @@ export function today() {
 }
 
 export function monthRange(month: string) {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('请选择有效月份。');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Choose a valid month.');
   const [y, m] = month.split('-').map(Number);
   return { from: `${month}-01`, to: `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01` };
+}
+
+export function monthLabel(month: string) {
+  monthRange(month);
+  return new Intl.DateTimeFormat('en-MY', {
+    month: 'long', year: 'numeric', timeZone: 'UTC',
+  }).format(new Date(`${month}-01T00:00:00Z`));
 }
 
 export function money(value: number) {
@@ -72,15 +79,15 @@ export function filterLines(lines: PurchaseLine[], query: string, supplier: stri
     (!term || line.item_name.toLocaleLowerCase().includes(term)));
 }
 export function validateDraft(date: string, supplier: string, lines: DraftLine[]) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return '请填写采购日期。';
-  if (!supplier.trim() || supplier.trim().length > 200) return '请填写供应商名称（最多 200 字）。';
-  if (lines.length === 0 || lines.length > 100) return '每张单据需要 1 至 100 项商品。';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return 'Enter a purchase date.';
+  if (!supplier.trim() || supplier.trim().length > 200) return 'Enter a supplier name (up to 200 characters).';
+  if (lines.length === 0 || lines.length > 100) return 'Each invoice must contain 1 to 100 items.';
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!line.name.trim() || line.name.trim().length > 200) return `请填写第 ${i + 1} 项的商品名称。`;
-    if (!/^\d+(\.\d{1,3})?$/.test(line.quantity) || Number(line.quantity) <= 0 || Number(line.quantity) >= 1e9) return `第 ${i + 1} 项数量需要大于 0，最多 3 位小数。`;
-    if (!/^\d+(\.\d{1,2})?$/.test(line.amount) || Number(line.amount) >= 1e10) return `第 ${i + 1} 项金额需要为 0 或正数，最多 2 位小数。`;
-    if (!UNITS.some(([unit]) => unit === line.unit)) return `请选择第 ${i + 1} 项的单位。`;
+    if (!line.name.trim() || line.name.trim().length > 200) return `Enter a name for item ${i + 1}.`;
+    if (!/^\d+(\.\d{1,3})?$/.test(line.quantity) || Number(line.quantity) <= 0 || Number(line.quantity) >= 1e9) return `Item ${i + 1} needs a quantity greater than zero, with up to 3 decimal places.`;
+    if (!/^\d+(\.\d{1,2})?$/.test(line.amount) || Number(line.amount) >= 1e10) return `Item ${i + 1} needs a nonnegative amount, with up to 2 decimal places.`;
+    if (!UNITS.some(([unit]) => unit === line.unit)) return `Choose a unit for item ${i + 1}.`;
   }
   return null;
 }
