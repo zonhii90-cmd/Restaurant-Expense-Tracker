@@ -35,9 +35,15 @@ GitHub 套餐。不要为了开启 Pages 随意更改仓库可见性。
 此地址在部署成功前可能返回 404，不代表网站已上线。
 
 如果日志持续显示 `Current status: updating_pages`，说明 GitHub 已接受部署，
-但网站发布还未完成。工作流允许等待 20 分钟，部署任务总上限为 25 分钟。
-延长等待不会修复 GitHub 后台故障；如果仍然超时，需要继续检查 Pages 设置和
-GitHub 的服务状态，而不是重新填写 Supabase key 或反复运行同一个失败任务。
+但网站发布还未完成。deploy-pages Action 的实际等待硬上限为 10 分钟，
+增加 timeout 参数不能超过该上限。若出现 `due to in progress deployment`，
+说明 GitHub 仍有旧的部署占用发布流程。
+
+恢复步骤只检查这次故障中已确认的旧部署 ID
+`e8b873f3cdd2c54d1ac9f9ba9978458635e1ad59`。已完成或不存在时直接继续；
+仍在进行时，通过 GitHub 官方 Pages API 请求取消并等待最多 2 分钟。
+若取消后仍未释放，流程会停止并提示检查 GitHub 服务或联系支持，避免继续
+提交被阻塞的部署。此操作不修改 Supabase 数据，也不取消其他部署。
 
 ## 4. 首次使用检查
 
