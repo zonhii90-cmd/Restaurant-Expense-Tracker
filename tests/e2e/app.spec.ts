@@ -47,7 +47,8 @@ test('manager can search, summarize, export an Excel file, and save a multi-item
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Purchase overview', exact: true }).click();
   await expect(page.getByText('RM 450.00', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/manager-overview.png', fullPage: true });
   await page.getByRole('textbox', { name: 'Search items' }).fill('cooking oil');
@@ -88,8 +89,9 @@ test('mobile staff can enter purchases without horizontal page overflow', async 
   await page.setViewportSize({ width: 390, height: 844 });
   await backend(page, 'staff');
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Monthly reports' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Purchase overview', exact: true }).click();
   await expect(page.getByText('My purchases · MYR')).toBeVisible();
   const records = page.getByRole('list', { name: 'Purchase records' });
   await records.scrollIntoViewIfNeeded();
@@ -109,7 +111,7 @@ for (const width of [320, 360, 430]) {
     page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
-    await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
     await nav.getByRole('button', { name: 'Monthly reports' }).click();
     const totals = page.getByRole('list', { name: 'Item totals' });
     await expect(totals.getByText('5 tin', { exact: true })).toBeVisible();
@@ -141,6 +143,9 @@ for (const width of [320, 360, 430]) {
     await page.getByLabel('Item 2 quantity').fill('5');
     await page.getByLabel('Item 2 amount').fill('25');
     const save = page.getByRole('button', { name: 'Save purchase', exact: true });
+    await expect(page.locator('.primary:visible')).toHaveCount(1);
+    await expect(save).toHaveCSS('background-color', 'rgb(236, 102, 8)');
+    await expect(save).toHaveCSS('color', 'rgb(17, 17, 17)');
     await expect(save).toBeInViewport();
     const saveBox = (await save.boundingBox())!;
     const navBox = (await nav.boundingBox())!;
@@ -165,7 +170,7 @@ test('login form sends credentials and opens authenticated workspace', async ({ 
   await page.getByLabel('Email', { exact: true }).fill('manager@example.test');
   await page.getByLabel('Password', { exact: true }).fill('test-password-only');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
 });
 
 test('failed save keeps input and retries the same invoice ID', async ({ page }) => {
@@ -207,5 +212,28 @@ test('small-phone sign-in fits the screen and uses readable input text', async (
   await page.getByLabel('Password', { exact: true }).fill('test-password-only');
   const submit = page.getByRole('button', { name: 'Sign in', exact: true });
   await submit.click();
-  await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+});
+
+
+test('purchase form is the default, with one primary action and optional details', async ({ page }) => {
+  await backend(page);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+  await expect(page.locator('.entry-assurance')).toContainText('Approved restaurant accounts only');
+  await expect(page.locator('.primary:visible')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Save purchase', exact: true })).toHaveCSS('background-color', 'rgb(236, 102, 8)');
+  await expect(page.getByLabel('Invoice number')).not.toBeVisible();
+  await page.getByText('Invoice number & notes', { exact: false }).click();
+  await page.getByLabel('Invoice number').fill('INV-2026-TEST');
+  await page.getByLabel('Notes', { exact: true }).fill('Delivered in the morning');
+  await expect(page.getByLabel('Invoice number')).toHaveValue('INV-2026-TEST');
+  await page.getByLabel('Notes', { exact: true }).blur();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: 'test-results/form-focused-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(page.locator('.primary:visible')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Save purchase', exact: true })).toBeInViewport();
+  await page.screenshot({ path: 'test-results/form-focused-phone.png' });
 });

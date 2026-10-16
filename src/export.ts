@@ -13,8 +13,8 @@ export async function createWorkbook(lines: PurchaseLine[], period: string) {
     const worksheet = workbook.addWorksheet(sheet.name, { views: [{ state: 'frozen', ySplit: 1 }] });
     worksheet.addRow(sheet.headers);
     worksheet.addRows(sheet.rows);
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF183E31' } };
+    worksheet.getRow(1).font = { bold: true, color: { argb: 'FF111111' } };
+    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEC6608' } };
     worksheet.columns.forEach((column, index) => {
       column.width = index < 4 ? 24 : 18;
       if (sheet.headers[index].includes('RM')) column.numFmt = '#,##0.00';
