@@ -18,7 +18,12 @@ not modify your Supabase project. Run the scripts there through SQL Editor.
    required for a new project. If the tables are already installed, only the
    second script is needed to add this feature.
 
-Only run this in the new project intended for this app. It uses tables in the
+6. Run the entire `receipt-photos.sql` script in a third query to enable receipt
+   photos. For an existing installation with working purchases, this is the only
+   new script required. It creates a private Storage bucket and scoped access
+   policies; no new key or login is needed.
+
+Only run this in the project intended for this app. It uses tables in the
 `public` schema. Re-running it on the same schema preserves saved records.
 
 ## Account setup comes next
@@ -51,3 +56,16 @@ Supplier and item names should be reused rather than creating alternative
 spellings. `save-purchase.sql` saves each invoice and all its lines in a single
 transaction, with a stable client-generated ID to protect retries from duplicates.
 Excel generation is implemented in the browser app, not the database.
+
+## Receipt access
+
+The `restaurant-receipts` bucket stays private. Only active approved accounts can
+upload to their own path. Photos become readable only when linked to a purchase:
+manager accounts can view all restaurant receipts and staff only their own.
+Upload overwrite and delete are not granted to browser clients. The website uses
+five-minute signed URLs for viewing rather than permanent public URLs.
+
+If upload fails, keep the form open and retry or remove the optional photo.
+Do not delete an uploaded file automatically after a connection failure: its
+purchase may already have been saved. Old confirmed unlinked uploads may be
+removed by the project administrator after checking `purchases.receipt_path`.

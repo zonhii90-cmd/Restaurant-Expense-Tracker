@@ -8,6 +8,8 @@ ringgit, with calendar dates based on Asia/Kuching.
 
 - Email/password login using Supabase Auth; approved staff and manager roles.
 - Supplier, date, optional invoice number and notes, and up to 100 item lines.
+- Optional receipt photo: phone camera or photo library, preview/removal before saving,
+  private shared storage and a View receipt action in purchase history.
 - Each line has item name, quantity, unit, line total and calculated unit price.
 - Atomic invoice saving and idempotent retries after an uncertain response.
 - Purchase history, month/all-date filtering, item search, supplier filtering.
@@ -44,7 +46,8 @@ rejects service-role JWTs and `sb_secret_` keys as configuration. A publishable
 key identifies the project; authentication and database policies protect records.
 
 In Supabase SQL Editor, run `supabase/setup.sql` and then
-`supabase/save-purchase.sql`. Configure the first manager and staff as described
+`supabase/save-purchase.sql`, then `supabase/receipt-photos.sql` to enable private
+receipt storage. Configure the first manager and staff as described
 in [the database guide](supabase/README.md).
 
 ```sh
@@ -94,12 +97,39 @@ Do not disable RLS to troubleshoot a login or saving error.
 
 ## Current handoff
 
-The app and SQL scripts are prepared in this checkout. Hosted Supabase operations,
-real-device synchronization and production deployment require the project's
-public connection settings and the hosted saving-function migration. Local
-browser tests use mocks. Files have not been pushed to GitHub or deployed merely
-by creating this checkout.
+GitHub Pages deploys changes pushed to `main`. Receipt photos require the new
+`receipt-photos.sql` migration in the hosted Supabase project; adding files to
+the repository does not apply that migration. Local database tests run PostgreSQL
+and browser tests mock Supabase; neither establishes real-device synchronization
+or hosted Storage readiness.
 
-Receipts/photos, tax accounting, multiple outlets, offline entry, invoice editing
+Tax accounting, multiple outlets, offline entry, invoice editing
 in the app and unit conversion are outside this first version. A carton and a
 tin are reported separately; no pack-size assumptions are made.
+
+## Receipt photo setup
+
+For an existing installation, run the **whole**
+[`supabase/receipt-photos.sql`](supabase/receipt-photos.sql) file in the project's
+Supabase SQL Editor. It adds a private `restaurant-receipts` bucket, scoped storage
+policies, a nullable receipt path on invoices and an atomic photo-aware save RPC.
+It does not delete purchases or change account membership. No new browser key is
+required. Without this migration, purchases without a photo still work; attaching
+a photo gives a setup/upload error rather than pretending the image was saved.
+
+One photo is attached per invoice. The browser decodes JPG, PNG, WebP or HEIC/HEIF
+(where supported by the device), re-encodes to JPEG with a longest edge of 2400px
+and strips metadata. The source limit is 20 MB; uploaded JPEGs must be at most
+5 MB. Unsupported images show an error without removing the existing selection.
+There is no OCR or automatic item extraction. Physical camera behavior and HEIC
+decoding need real-device testing; Chromium file-picker tests do not verify them.
+
+Photos upload before the atomic invoice save. Upload failures leave the form
+intact and do not submit the invoice. Stable invoice IDs and immutable random
+photo paths allow safe retry after a lost response. A failed/abandoned draft may
+leave an **unlinked private object**; it is unreadable through the app's policies.
+Do not automatically delete objects after an uncertain save: the transaction may
+already have committed. Administrators can remove confirmed old unlinked objects
+through Storage after checking `purchases.receipt_path`. Never make the bucket
+public. Managers can view linked photos for all purchases; staff can view only
+their own. Signed viewing links expire after five minutes.

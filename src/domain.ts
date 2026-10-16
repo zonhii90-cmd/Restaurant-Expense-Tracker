@@ -9,6 +9,7 @@ export type Unit = typeof UNITS[number][0];
 export type CatalogEntry = { id: string; name: string };
 export type PurchaseLine = {
   id: string; purchase_id: string; purchase_date: string; invoice_number: string | null;
+  receipt_path?: string | null;
   created_by: string; supplier_id: string; supplier_name: string;
   item_id: string; item_name: string; quantity: number; unit: Unit;
   total_amount: number; unit_price: number;

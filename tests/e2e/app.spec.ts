@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { today } from '../../src/domain';
+import { today, type PurchaseLine, type DraftLine } from '../../src/domain';
 
 const userId = '00000000-0000-4000-8000-000000000001';
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'manager@example.test', email_confirmed_at: new Date().toISOString(), app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() };
@@ -7,7 +7,7 @@ const token = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: userId, 
 const session = { access_token: token, refresh_token: 'test-refresh-token', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, user };
 const oil = { id: 'i1', name: 'Cooking Oil' };
 const supplier = { id: 's1', name: 'ABC Trading' };
-const initial = [
+const initial: PurchaseLine[] = [
   { id: 'l1', purchase_id: 'p1', purchase_date: today(), invoice_number: 'INV-1', created_by: userId, supplier_id: supplier.id, supplier_name: supplier.name, item_id: oil.id, item_name: oil.name, quantity: 2, unit: 'tin', total_amount: 180, unit_price: 90 },
   { id: 'l2', purchase_id: 'p2', purchase_date: today(), invoice_number: 'INV-2', created_by: userId, supplier_id: supplier.id, supplier_name: supplier.name, item_id: oil.id, item_name: oil.name, quantity: 3, unit: 'tin', total_amount: 270, unit_price: 90 },
 ];
@@ -24,12 +24,12 @@ async function backend(page: Page, role: 'manager' | 'staff' = 'manager', logged
     else if (url.pathname.endsWith('/items')) data = [oil];
     else if (url.pathname.endsWith('/suppliers')) data = [supplier];
     else if (url.pathname.endsWith('/purchase_history')) data = records;
-    else if (url.pathname.endsWith('/restaurant_save_purchase')) {
+    else if ((url.pathname.endsWith('/restaurant_save_purchase') || url.pathname.endsWith('/restaurant_save_purchase_with_receipt'))) {
       const request = route.request().postDataJSON();
       calls.push(request);
-      request.p_lines.forEach((line: Record<string, string>, index: number) => records.push({
+      request.p_lines.forEach((line: Pick<DraftLine, 'name' | 'quantity' | 'unit' | 'amount'>, index: number) => records.push({
         ...initial[0], id: `${request.p_id}:${index}`, purchase_id: request.p_id,
-        purchase_date: request.p_date, invoice_number: request.p_invoice,
+        purchase_date: request.p_date, invoice_number: request.p_invoice, receipt_path: request.p_receipt_path ?? null,
         item_name: line.name, quantity: Number(line.quantity), unit: line.unit,
         item_id: line.name === oil.name ? oil.id : `item-${line.name}`,
         total_amount: Number(line.amount), unit_price: Number(line.amount) / Number(line.quantity),
@@ -236,4 +236,135 @@ test('purchase form is the default, with one primary action and optional details
   await expect(page.locator('.primary:visible')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Save purchase', exact: true })).toBeInViewport();
   await page.screenshot({ path: 'test-results/form-focused-phone.png' });
+});
+
+
+const receiptPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ1kAAAAASUVORK5CYII=', 'base64');
+const receiptFile = { name: 'invoice.png', mimeType: 'image/png', buffer: receiptPng };
+async function fillPurchase(page: Page) {
+  await page.getByLabel('Supplier name').fill('ABC Trading');
+  await page.getByLabel('Item 1 name').fill('Cooking Oil');
+  await page.getByLabel('Item 1 quantity').fill('2');
+  await page.getByLabel('Item 1 amount').fill('180');
+}
+async function mockStorage(page: Page, failFirst = false, conflictOnRetry = false) {
+  const uploads: string[] = [];
+  const signs: string[] = [];
+  await page.route('**/storage/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.includes('/object/sign/')) {
+      if (route.request().method() === 'POST') {
+        expect(route.request().postDataJSON().expiresIn).toBe(300);
+        signs.push(path);
+        await route.fulfill({ json: { signedURL: path.replace('/storage/v1', '') + '?token=test-only' } });
+      } else await route.fulfill({ contentType: 'image/png', body: receiptPng });
+    } else {
+      uploads.push(path);
+      expect(route.request().headers()['x-upsert']).toBe('false');
+      expect(route.request().postDataBuffer()?.includes(Buffer.from([0xff, 0xd8, 0xff]))).toBeTruthy();
+      if (failFirst && uploads.length === 1) await route.fulfill({ status: 500, json: { statusCode: '500', error: 'upload failed', message: 'unavailable' } });
+      else if (conflictOnRetry) await route.fulfill({ status: 409, json: { statusCode: '409', error: 'Duplicate', message: 'The resource already exists' } });
+      else await route.fulfill({ json: { Key: path } });
+    }
+  });
+  return { uploads, signs };
+}
+
+for (const width of [320, 390]) {
+  test(`receipt photo at ${width}px can be selected, saved and viewed from history`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const calls = await backend(page);
+    const { uploads, signs } = await mockStorage(page);
+    await page.goto('/');
+    await fillPurchase(page);
+    await expect(page.getByLabel('Take receipt photo')).toHaveAttribute('capture', 'environment');
+    await expect(page.getByLabel('Choose receipt photo')).not.toHaveAttribute('capture');
+    await page.getByLabel('Choose receipt photo').setInputFiles(receiptFile);
+    await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+    await page.getByRole('heading', { name: 'Receipt photo optional' }).scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await expect(page.locator('.primary:visible')).toHaveCount(1);
+    await page.screenshot({ path: `test-results/receipt-entry-${width}.png` });
+    await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Purchase saved');
+    expect(uploads).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].p_receipt_path).toMatch(new RegExp(`^${userId}/${calls[0].p_id}/[0-9a-f-]{36}\\.jpg$`));
+    await page.getByRole('button', { name: 'View receipt for Cooking Oil', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Receipt photo' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('img', { name: /^Receipt from / })).toBeVisible();
+    await expect(dialog.getByRole('img', { name: /^Receipt from / })).toHaveJSProperty('naturalWidth', 1);
+    expect(signs).toHaveLength(1);
+    await expect(dialog.getByRole('button', { name: 'Close receipt' })).toBeFocused();
+    await page.screenshot({ path: `test-results/receipt-view-${width}.png` });
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+  });
+}
+
+test('failed receipt upload preserves the photo and fields and does not submit a purchase', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 812 });
+  const calls = await backend(page);
+  const { uploads } = await mockStorage(page, true, true);
+  await page.goto('/');
+  await fillPurchase(page);
+  await page.getByLabel('Take receipt photo').setInputFiles(receiptFile);
+  await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Your purchase has not been submitted');
+  expect(calls).toHaveLength(0);
+  await expect(page.getByLabel('Supplier name')).toHaveValue('ABC Trading');
+  await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Purchase saved');
+  expect(calls).toHaveLength(1);
+  expect(uploads).toHaveLength(2);
+  expect(uploads[0]).toBe(uploads[1]);
+});
+
+test('retry after invoice failure reuses the uploaded photo and stable invoice ID', async ({ page }) => {
+  const calls = await backend(page);
+  const { uploads } = await mockStorage(page);
+  let first: Record<string, any> | null = null;
+  await page.route('**/rest/v1/rpc/restaurant_save_purchase_with_receipt', async route => {
+    const payload = route.request().postDataJSON();
+    if (!first) {
+      first = payload;
+      await route.fulfill({ status: 503, json: { message: 'unavailable' } });
+    } else {
+      expect(payload).toEqual(first);
+      await route.fallback();
+    }
+  });
+  await page.goto('/');
+  await fillPurchase(page);
+  await page.getByLabel('Choose receipt photo').setInputFiles(receiptFile);
+  await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Purchase saved');
+  expect(uploads).toHaveLength(1);
+  expect(calls).toHaveLength(1);
+});
+
+test('invalid photos preserve the selection and removal saves an invoice without a photo', async ({ page }) => {
+  const calls = await backend(page);
+  const { uploads } = await mockStorage(page);
+  await page.goto('/');
+  await fillPurchase(page);
+  await page.getByLabel('Choose receipt photo').setInputFiles(receiptFile);
+  await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+  await page.getByLabel('Choose receipt photo').setInputFiles({ name: 'not-photo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg/>') });
+  await expect(page.getByRole('alert')).toContainText('Choose a JPG');
+  await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Remove photo' }).click();
+  await expect(page.getByAltText('Receipt photo preview')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Purchase saved');
+  expect(uploads).toHaveLength(0);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).not.toHaveProperty('p_receipt_path');
 });

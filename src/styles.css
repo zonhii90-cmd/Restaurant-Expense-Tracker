@@ -231,3 +231,34 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
   .mobile-savebar .primary { min-height: 50px; }
   .auth-card { padding: 26px 22px; }
 }
+
+
+/* Receipt capture remains a secondary, optional part of the purchase form. */
+.receipt-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.receipt-actions .secondary { min-height: 48px; }
+.receipt-hint { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.7; margin: 14px 0 0; }
+.receipt-field .message { margin: 14px 0 0; }
+.receipt-preview { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+.receipt-preview > img { display: block; width: 100%; max-height: 280px; object-fit: contain; background: #f5f5f5; }
+.receipt-preview > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; }
+.receipt-preview span { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.receipt-preview .text-button { flex-shrink: 0; min-height: 44px; color: var(--ink); }
+.view-receipt { color: var(--ink); gap: 6px; min-height: 44px; font-size: 12px; }
+.receipt-dialog { width: min(800px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: #fff; overflow: auto; }
+.receipt-dialog::backdrop { background: #000a; }
+.receipt-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.receipt-dialog h2 { font-size: 18px; margin: 0 0 6px; }
+.receipt-dialog header p { font-size: 13px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.receipt-dialog .icon-button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
+.receipt-image { background: #f5f5f5; padding: 12px; }
+.receipt-image img { display: block; width: 100%; max-height: 65dvh; object-fit: contain; }
+.receipt-loading { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; min-height: 200px; padding: 24px; text-align: center; }
+.receipt-fullsize { margin: 16px; text-decoration: none; min-height: 44px; }
+@media (max-width: 740px) {
+  .receipt-field .section-title p { display: block !important; }
+  .receipt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .receipt-actions .secondary { min-width: 0; padding: 12px 8px; font-size: 13px; }
+  .receipt-preview > div { flex-wrap: wrap; }
+  .view-receipt { font-size: 13px; margin-top: 8px; }
+  .receipt-dialog { max-height: calc(100dvh - 24px); }
+}

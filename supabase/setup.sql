@@ -31,10 +31,12 @@ create table if not exists public.purchases (
   purchase_date date not null,
   supplier_id uuid not null references public.suppliers(id),
   invoice_number text check (length(invoice_number) <= 200),
+  receipt_path text,
   notes text check (length(notes) <= 2000),
   created_by uuid not null default auth.uid() references auth.users(id),
   created_at timestamptz not null default now()
 );
+alter table public.purchases add column if not exists receipt_path text;
 create index if not exists purchases_date_idx on public.purchases(purchase_date);
 create index if not exists purchases_creator_idx on public.purchases(created_by);
 create index if not exists purchases_supplier_idx on public.purchases(supplier_id);
@@ -138,7 +140,8 @@ with (security_invoker = true) as
 select l.id, p.id as purchase_id, p.purchase_date, p.invoice_number,
   p.created_by, s.id as supplier_id, s.name as supplier_name,
   i.id as item_id, i.name as item_name, l.quantity, l.unit,
-  l.total_amount, round(l.total_amount / l.quantity, 4) as unit_price
+  l.total_amount, round(l.total_amount / l.quantity, 4) as unit_price,
+  p.receipt_path
 from public.purchase_items l
 join public.purchases p on p.id = l.purchase_id
 join public.suppliers s on s.id = p.supplier_id
