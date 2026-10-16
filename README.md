@@ -15,6 +15,9 @@ ringgit, with calendar dates based on Asia/Kuching.
 - Real `.xlsx` export with detail, item summary and supplier summary worksheets.
 - Database row-level security. No public signup UI or browser-side role editing.
 - Automatic record refresh every minute and when the browser window regains focus.
+- Phone layouts use fixed bottom navigation, readable purchase/report cards and
+  a persistent total/save bar. Inputs use 16px text on phones to avoid iOS focus
+  zoom. Adding an item focuses its name; saved invoices offer an Add another action.
 
 ## Development
 

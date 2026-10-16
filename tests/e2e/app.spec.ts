@@ -31,6 +31,7 @@ async function backend(page: Page, role: 'manager' | 'staff' = 'manager', logged
         ...initial[0], id: `${request.p_id}:${index}`, purchase_id: request.p_id,
         purchase_date: request.p_date, invoice_number: request.p_invoice,
         item_name: line.name, quantity: Number(line.quantity), unit: line.unit,
+        item_id: line.name === oil.name ? oil.id : `item-${line.name}`,
         total_amount: Number(line.amount), unit_price: Number(line.amount) / Number(line.quantity),
       }));
       data = request.p_id;
@@ -90,14 +91,73 @@ test('mobile staff can enter purchases without horizontal page overflow', async 
   await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Monthly reports' })).toHaveCount(0);
   await expect(page.getByText('My purchases · MYR')).toBeVisible();
-  await page.getByRole('table').scrollIntoViewIfNeeded();
-  await expect(page.getByRole('cell', { name: '180.00', exact: true })).toBeInViewport();
+  const records = page.getByRole('list', { name: 'Purchase records' });
+  await records.scrollIntoViewIfNeeded();
+  await expect(records.getByText('RM 180.00', { exact: true })).toBeInViewport();
   await page.screenshot({ path: 'test-results/staff-mobile.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.getByRole('button', { name: 'Add purchase', exact: true }).first().click();
   await expect(page.getByRole('button', { name: 'Save purchase', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 });
+
+for (const width of [320, 360, 430]) {
+  test(`phone ${width}px supports card reports and a persistent save action`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 812 });
+    const calls = await backend(page);
+    const dialogs: string[] = [];
+    page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+    await page.goto('/');
+    const nav = page.getByRole('navigation', { name: 'Main navigation' });
+    await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
+    await nav.getByRole('button', { name: 'Monthly reports' }).click();
+    const totals = page.getByRole('list', { name: 'Item totals' });
+    await expect(totals.getByText('5 tin', { exact: true })).toBeVisible();
+    await expect(totals.getByText('RM 450.00', { exact: true })).toBeVisible();
+    await totals.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `test-results/phone-report-${width}.png` });
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await totals.getByRole('button', { name: 'View purchases' }).click();
+    await expect(page.getByRole('textbox', { name: 'Search items' })).toHaveValue('Cooking Oil');
+    await expect(page.getByRole('list', { name: 'Purchase records' }).getByRole('listitem')).toHaveCount(2);
+    await nav.getByRole('button', { name: 'Monthly reports' }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.getByRole('button', { name: 'By supplier', exact: true }).click();
+    await expect(page.getByRole('list', { name: 'Supplier totals' }).getByText('ABC Trading')).toBeVisible();
+    await page.getByRole('button', { name: 'Refresh records', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'By supplier', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await nav.getByRole('button', { name: 'Add purchase', exact: true }).click();
+    await page.getByLabel('Supplier name').fill('ABC Trading');
+    await page.getByLabel('Item 1 name').fill('Cooking Oil');
+    await page.getByLabel('Item 1 quantity').fill('2');
+    await page.getByLabel('Item 1 unit').selectOption('tin');
+    await page.getByLabel('Item 1 amount').fill('180');
+    await nav.getByRole('button', { name: 'Add purchase', exact: true }).click();
+    expect(dialogs).toEqual([]);
+    await expect(page.getByLabel('Item 1 name')).toHaveValue('Cooking Oil');
+    await page.getByRole('button', { name: 'Add another item' }).click();
+    await expect(page.getByLabel('Item 2 name')).toBeFocused();
+    await page.getByLabel('Item 2 name').fill('Flour');
+    await page.getByLabel('Item 2 quantity').fill('5');
+    await page.getByLabel('Item 2 amount').fill('25');
+    const save = page.getByRole('button', { name: 'Save purchase', exact: true });
+    await expect(save).toBeInViewport();
+    const saveBox = (await save.boundingBox())!;
+    const navBox = (await nav.boundingBox())!;
+    expect(saveBox.height).toBeGreaterThanOrEqual(44);
+    expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(navBox.y);
+    expect(Number(await page.getByLabel('Item 2 name').evaluate(el => getComputedStyle(el).fontSize.replace('px', '')))).toBeGreaterThanOrEqual(16);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.screenshot({ path: `test-results/phone-entry-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `test-results/phone-entry-viewport-${width}.png` });
+    await save.click();
+    await expect(page.getByRole('status')).toContainText('Purchase saved');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].p_lines).toHaveLength(2);
+    await page.getByRole('button', { name: 'Add another', exact: true }).click();
+    await expect(page.getByLabel('Supplier name')).toHaveValue('');
+  });
+}
 
 test('login form sends credentials and opens authenticated workspace', async ({ page }) => {
   await backend(page, 'manager', false);
@@ -109,6 +169,7 @@ test('login form sends credentials and opens authenticated workspace', async ({ 
 });
 
 test('failed save keeps input and retries the same invoice ID', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 812 });
   const calls = await backend(page);
   let firstId = '';
   await page.route('**/rest/v1/rpc/restaurant_save_purchase', async route => {
@@ -133,4 +194,18 @@ test('failed save keeps input and retries the same invoice ID', async ({ page })
   await page.getByRole('button', { name: 'Save purchase', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Purchase saved');
   expect(calls).toHaveLength(1);
+});
+
+test('small-phone sign-in fits the screen and uses readable input text', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await backend(page, 'manager', false);
+  await page.goto('/');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  const email = page.getByLabel('Email', { exact: true });
+  expect(await email.evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+  await email.fill('manager@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('test-password-only');
+  const submit = page.getByRole('button', { name: 'Sign in', exact: true });
+  await submit.click();
+  await expect(page.getByRole('heading', { name: 'Purchase overview.' })).toBeVisible();
 });
