@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { ArrowDownToLine, ArrowUpRight, CheckCircle2, ChefHat, ClipboardList, FileBarChart2, Leaf, Loader2, LogOut, Plus, RefreshCw, Search, ShieldCheck, ShoppingBasket, Trash2, Wallet } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpRight, CheckCircle2, ChefHat, ClipboardList, LayoutDashboard, Store, FileBarChart2, Leaf, Loader2, LogOut, Plus, RefreshCw, Search, ShieldCheck, ShoppingBasket, Trash2, Wallet } from 'lucide-react';
 import { configured, friendlyError, supabase } from './client';
 import { getCatalog, getHistory } from './api';
 import PurchaseHistory from './PurchaseHistory';
@@ -9,13 +9,12 @@ import ReceiptPhotoField from './ReceiptPhotoField';
 import { receiptPath, uploadReceipt, type ReceiptPhoto } from './receipts';
 import { dateLabel, filterLines, money, monthLabel, quantity, summarizeItems, summarizeSuppliers, today, totalAmount, UNITS, validateDraft, type CatalogEntry, type DraftLine, type PurchaseLine } from './domain';
 
-type Mode = 'history' | 'entry' | 'reports';
+import { resolveWorkspace, workspaceHash, type Mode, type WorkspaceRoute } from './workspaces';
+import ManagementDashboard from './ManagementDashboard';
+import SupplierOverview from './SupplierOverview';
+import PurchaseDetails from './PurchaseDetails';
+
 type Member = { active: boolean; role: 'manager' | 'staff' };
-const navItems = [
-  { mode: 'history' as Mode, title: 'Purchase overview', Icon: ClipboardList },
-  { mode: 'entry' as Mode, title: 'Add purchase', Icon: Plus },
-  { mode: 'reports' as Mode, title: 'Monthly reports', Icon: FileBarChart2 },
-];
 function Spinner() { return <Loader2 size={18} className="spin" aria-label="Loading" />; }
 function Message({ children, success = false }: { children: ReactNode; success?: boolean }) {
   return <div className={`message ${success ? 'success' : 'error'}`} role={success ? 'status' : 'alert'}>{children}</div>;
@@ -83,7 +82,10 @@ function Login() {
 }
 
 function Workspace({ session, member, logout, authError }: { session: Session; member: Member; logout: () => Promise<void>; authError: string }) {
-  const [mode, setMode] = useState<Mode>('entry');
+  const manager = member.role === 'manager';
+  const [route, setRoute] = useState<WorkspaceRoute>(() => resolveWorkspace(window.location.hash, manager));
+  const { area, mode } = route;
+  const management = manager && area === 'management';
   const [month, setMonth] = useState(today().slice(0, 7));
   const [allDates, setAllDates] = useState(false);
   const [query, setQuery] = useState('');
@@ -100,9 +102,29 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
   const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(0);
   const [reportTab, setReportTab] = useState<'items' | 'suppliers'>('items');
-  const manager = member.role === 'manager';
+  const [purchase, setPurchase] = useState<PurchaseLine[] | null>(null);
   const refresh = useCallback(() => setVersion(v => v + 1), []);
-  useEffect(() => { window.scrollTo(0, 0); }, [mode]);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    window.history.replaceState(window.history.state, '', workspaceHash(route));
+  }, [area, mode]);
+  useEffect(() => {
+    const change = () => {
+      const next = resolveWorkspace(window.location.hash, manager);
+      if (next.area === area && next.mode === mode) {
+        window.history.replaceState(window.history.state, '', workspaceHash(route));
+        return;
+      }
+      if (saving || (dirty && !window.confirm('This purchase has not been saved. Leave this page?'))) {
+        window.history.replaceState(window.history.state, '', workspaceHash(route));
+        return;
+      }
+      setRoute(next); setDirty(false); setNotice(''); setError(''); setPurchase(null);
+      setQuery(''); setSupplier(''); setAllDates(false); setPage(0);
+    };
+    window.addEventListener('hashchange', change);
+    return () => window.removeEventListener('hashchange', change);
+  }, [area, mode, dirty, saving, manager]);
   useEffect(() => {
     const interval = setInterval(() => { if (document.visibilityState === 'visible' && mode !== 'entry') refresh(); }, 60000);
     const focus = () => { if (mode !== 'entry') refresh(); };
@@ -113,11 +135,11 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
     if (mode === 'entry') return;
     let alive = true;
     setLoading(true); setError(''); setLines([]);
-    getHistory(month, allDates).then(data => {
+    getHistory(month, allDates, management ? undefined : session.user.id).then(data => {
       if (alive) { setLines(data); setLoading(false); }
     }).catch(err => { if (alive) { setError(friendlyError(err)); setLoading(false); } });
     return () => { alive = false; };
-  }, [month, allDates, version, mode]);
+  }, [month, allDates, version, mode, management, session.user.id]);
   useEffect(() => {
     let alive = true;
     Promise.all([getCatalog('items'), getCatalog('suppliers')]).then(([nextItems, nextSuppliers]) => {
@@ -135,15 +157,20 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
   const itemTotals = useMemo(() => summarizeItems(filtered), [filtered]);
   const supplierTotals = useMemo(() => summarizeSuppliers(filtered), [filtered]);
   const invoiceCount = new Set(filtered.map(l => l.purchase_id)).size;
-  useEffect(() => {
-    setPage(current => Math.min(current, Math.max(0, Math.ceil(filtered.length / 50) - 1)));
-  }, [filtered.length]);
-  function navigate(next: Mode) {
-    if (saving || next === mode) return;
-    if (mode === 'entry' && dirty && !window.confirm('This purchase has not been saved. Leave this page?')) return;
-    setDirty(false); setMode(next); setNotice(''); setError('');
-    if (next === 'reports') setAllDates(false);
+  useEffect(() => { setPage(current => Math.min(current, Math.max(0, Math.ceil(filtered.length / 50) - 1))); }, [filtered.length]);
+  function go(next: WorkspaceRoute) {
+    if (saving || (next.area === area && next.mode === mode) || (!manager && next.area === 'management')) return;
+    if (dirty && !window.confirm('This purchase has not been saved. Leave this page?')) return;
+    setDirty(false); setRoute(next); setNotice(''); setError(''); setPurchase(null);
+    if (next.mode !== 'history') setAllDates(false);
+    if (next.area !== area || next.mode === 'dashboard' || next.mode === 'suppliers') { setQuery(''); setSupplier(''); setAllDates(false); }
   }
+  function navigate(next: Mode) {
+    go({ area: next === 'entry' ? 'staff' : next === 'history' ? area : 'management', mode: next });
+  }
+  function supplierPurchases(id: string) { navigate('history'); setQuery(''); setSupplier(id); setPage(0); }
+  function itemPurchases(name: string) { navigate('history'); setSupplier(''); setQuery(name); setPage(0); }
+  function clearFilters() { setQuery(''); setSupplier(''); setAllDates(false); }
   async function exportReport() {
     setExporting(true); setError('');
     try {
@@ -152,18 +179,42 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
     } catch { setError('The Excel export failed. Please try again.'); }
     finally { setExporting(false); }
   }
-  const screenTitle = mode === 'entry' ? 'Add a purchase' : mode === 'reports' ? 'Monthly reports' : 'Purchase overview';
-  return <div className={`app-shell${mode === 'entry' ? ' is-entering' : ''}`}><aside className="sidebar"><Brand /><div className="restaurant-tag"><span className="live-dot" /> My restaurant<span className="tag">{manager ? 'Manager' : 'Staff'}</span></div><span className="nav-label">WORKSPACE</span><nav aria-label="Main navigation">{navItems.filter(n => manager || n.mode !== 'reports').map(({ mode: next, title, Icon }) => <button key={next} className={mode === next ? 'nav-link active' : 'nav-link'} aria-label={title} aria-current={mode === next ? 'page' : undefined} disabled={saving} onClick={() => navigate(next)}><Icon size={19} /><span className="nav-label-full">{title}</span><span className="nav-label-short" aria-hidden="true">{next === 'history' ? 'Overview' : next === 'entry' ? 'Add purchase' : 'Reports'}</span>{next === 'entry' && <span className="nav-plus">＋</span>}</button>)}</nav><div className="sidebar-note"><ShieldCheck size={22} /><strong>One shared restaurant ledger</strong><p>Access is limited to approved restaurant accounts.</p></div><div className="profile"><span className="avatar" title={manager ? 'Manager account' : 'Staff account'}>{manager ? 'M' : 'S'}</span><div><strong>{manager ? 'Manager' : 'Staff member'}</strong><small title={session.user.email}>{session.user.email}</small></div><button className="icon-button" aria-label="Sign out" title="Sign out" disabled={saving} onClick={() => { if (!dirty || window.confirm('You have unsaved changes. Sign out and discard them?')) void logout(); }}><LogOut size={18} /></button></div></aside>
-    <main className="main"><div className="topbar"><span>My restaurant <span className="slash">/</span> <strong>{screenTitle}</strong></span><span className="today"><span className="live-dot" /> {dateLabel(today())} · Malaysia time</span></div><div className="main-content"><header className="page-heading"><div><span className="eyebrow">{mode === 'entry' ? 'DAILY PURCHASES' : mode === 'reports' ? 'MONTHLY INSIGHTS' : 'YOUR RESTAURANT, AT A GLANCE'}</span><h1>{screenTitle}<span className="heading-dot">.</span></h1><p>{mode === 'entry' ? 'One invoice. Add your items, check the total, then save.' : manager ? 'A clear view of daily purchases and spending at your restaurant.' : 'You can see your own purchases here. Managers can view all restaurant records.'}</p></div>{mode !== 'entry' && <button className="primary" onClick={() => navigate('entry')}><Plus size={18} />Add purchase</button>}</header>
+  const nav = management ? [
+    { mode: 'dashboard' as Mode, title: 'Dashboard', short: 'Dashboard', Icon: LayoutDashboard },
+    { mode: 'history' as Mode, title: 'Purchases', short: 'Purchases', Icon: ClipboardList },
+    { mode: 'reports' as Mode, title: 'Monthly reports', short: 'Reports', Icon: FileBarChart2 },
+    { mode: 'suppliers' as Mode, title: 'Suppliers', short: 'Suppliers', Icon: Store },
+  ] : [
+    { mode: 'entry' as Mode, title: 'Add purchase', short: 'Add purchase', Icon: Plus },
+    { mode: 'history' as Mode, title: 'My purchases', short: 'My purchases', Icon: ClipboardList },
+  ];
+  const screenTitle = mode === 'entry' ? 'Add a purchase' : mode === 'dashboard' ? 'Dashboard' : mode === 'reports' ? 'Monthly reports' : mode === 'suppliers' ? 'Suppliers' : management ? 'Purchases' : 'My purchases';
+  const period = allDates ? 'All dates' : monthLabel(month);
+  const unresolved = loading || Boolean(error);
+  const actions = <div className="button-row"><button className="icon-button refresh" onClick={refresh} disabled={loading} aria-label="Refresh records" title="Refresh records">{loading ? <Spinner /> : <RefreshCw size={17} />}</button><button className="secondary" disabled={loading || exporting || !filtered.length} onClick={exportReport}>{exporting ? <Spinner /> : <ArrowDownToLine size={16} />}Export Excel</button></div>;
+  return <div className={`app-shell ${management ? 'management-shell' : 'staff-shell'}${mode === 'entry' ? ' is-entering' : ''}`}>
+    <aside className="sidebar"><Brand /><div className="restaurant-tag"><span className="live-dot" />{management ? 'Management' : 'Staff workspace'}<span className="tag">{manager ? 'Manager' : 'Staff'}</span></div><span className="nav-label">{management ? 'MANAGE YOUR RESTAURANT' : 'DAILY PURCHASES'}</span>
+      <nav aria-label="Main navigation">{nav.map(({ mode: next, title, short, Icon }) => <button key={next} className={mode === next ? 'nav-link active' : 'nav-link'} aria-label={title} aria-current={mode === next ? 'page' : undefined} disabled={saving} onClick={() => navigate(next)}><Icon size={19} aria-hidden="true" /><span className="nav-label-full">{title}</span><span className="nav-label-short" aria-hidden="true">{short}</span></button>)}</nav>
+      <div className="sidebar-note"><ShieldCheck size={22} /><strong>{management ? 'Your restaurant, in view' : 'One shared restaurant ledger'}</strong><p>{management ? 'Purchases entered by approved staff appear in your management workspace.' : 'Record one invoice at a time. Your manager can review the saved details.'}</p></div>
+      <div className="profile"><span className="avatar" title={manager ? 'Manager account' : 'Staff account'}>{manager ? 'M' : 'S'}</span><div><strong>{manager ? 'Manager' : 'Staff member'}</strong><small title={session.user.email}>{session.user.email}</small></div><button className="icon-button" aria-label="Sign out" title="Sign out" disabled={saving} onClick={() => { if (!dirty || window.confirm('You have unsaved changes. Sign out and discard them?')) void logout(); }}><LogOut size={18} /></button></div>
+    </aside>
+    <main className="main"><div className="topbar"><span>{management ? 'Management workspace' : 'Staff workspace'}<span className="slash">/</span><strong>{screenTitle}</strong></span><span className="today">{dateLabel(today())} · Malaysia time</span></div><div className="main-content">
+      <div className="workspace-strip"><span><ShieldCheck size={15} aria-hidden="true" />{management ? 'Management workspace' : 'Staff workspace'}</span>{manager && <button className="secondary workspace-switch" disabled={saving} onClick={() => go(management ? { area: 'staff', mode: 'entry' } : { area: 'management', mode: 'dashboard' })}>{management ? <Plus size={16} aria-hidden="true" /> : <LayoutDashboard size={16} aria-hidden="true" />}{management ? 'Staff workspace' : 'Back to management'}</button>}</div>
+      <header className="page-heading"><div><span className="eyebrow">{management ? 'RESTAURANT MANAGEMENT' : 'DAILY PURCHASES'}</span><h1>{screenTitle}<span className="heading-dot">.</span></h1><p>{mode === 'entry' ? 'One invoice. Add your items, check the total, then save.' : management ? 'Review spending, check invoices and find the records you need.' : 'Your saved purchases and receipt photos.'}</p></div>{!management && mode !== 'entry' && <button className="primary" onClick={() => navigate('entry')}><Plus size={18} />Add purchase</button>}</header>
       {authError && <Message>{authError}</Message>}{notice && <Message success><CheckCircle2 size={18} /><span>{notice}</span><button className="text-button" onClick={() => navigate('entry')}>Add another</button></Message>}{error && <Message>{error}<button className="text-button" onClick={refresh}>Try again</button></Message>}
-      {mode === 'entry' ? <EntryForm userId={session.user.id} items={items} suppliers={suppliers} onDirty={setDirty} onSaving={setSaving} onSaved={(date) => { setDirty(false); setSaving(false); setMonth(date.slice(0, 7)); setAllDates(false); setQuery(''); setSupplier(''); setPage(0); setNotice('Purchase saved.'); setMode('history'); refresh(); }} /> : <>
-        <section className="stats" aria-label="Purchase summary"><Stat title={allDates ? 'Selected spending' : 'Selected monthly spending'} value={loading ? '—' : money(totalAmount(filtered))} detail={manager ? 'Restaurant purchases · MYR' : 'My purchases · MYR'} icon={<Wallet size={21} />} primary /><Stat title="Invoices" value={loading ? '—' : String(invoiceCount)} detail="Each invoice is counted once" icon={<ClipboardList size={21} />} /><Stat title="Items purchased" value={loading ? '—' : String(new Set(filtered.map(l => l.item_id)).size)} detail={loading ? 'Loading records' : `Suppliers: ${supplierTotals.length}`} icon={<ShoppingBasket size={21} />} /></section>
-        <section className="records-panel"><div className="panel-heading"><div><h2>{mode === 'reports' ? 'Understand every purchase' : 'Purchase history'}</h2><p>{allDates ? 'All dates' : monthLabel(month)}{query || supplier ? ' · Filtered' : ' · All items'}</p></div><div className="button-row"><button className="icon-button refresh" onClick={refresh} disabled={loading} aria-label="Refresh records" title="Refresh records">{loading ? <Spinner /> : <RefreshCw size={17} />}</button><button className="secondary" disabled={loading || exporting || !filtered.length} onClick={exportReport}>{exporting ? <Spinner /> : <ArrowDownToLine size={16} />}Export Excel</button></div></div>
-          <div className="filters"><label className="search-field"><Search size={17} /><input aria-label="Search items" placeholder="Search items, e.g. Cooking Oil" value={query} onChange={e => setQuery(e.target.value)} /></label><label className="sr-only" htmlFor="supplier-filter">Filter suppliers</label><select id="supplier-filter" value={supplier} onChange={e => setSupplier(e.target.value)}><option value="">All suppliers</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select><label className="sr-only" htmlFor="month-filter">Purchase month</label><input id="month-filter" type="month" value={month} disabled={allDates} onChange={e => { if (e.target.value) setMonth(e.target.value); }} />{mode === 'history' && <label className="check-label"><input type="checkbox" checked={allDates} onChange={e => setAllDates(e.target.checked)} />All dates</label>}</div>
-          {loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : error ? <div className="empty"><p>Unable to load records. Please try again.</p></div> : !filtered.length ? <div className="empty"><span className="empty-icon"><ShoppingBasket size={28} /></span><h3>{query || supplier ? 'No matching purchases' : 'No purchases in this period yet'}</h3><p>{query || supplier ? 'Try another item name, supplier or month.' : 'Add your first invoice to start tracking restaurant purchases.'}</p>{query || supplier ? <button className="secondary" onClick={() => { setQuery(''); setSupplier(''); }}>Clear filters</button> : <button className="secondary" onClick={() => navigate('entry')}><Plus size={16} />Add your first purchase</button>}</div> : mode === 'reports' ? <Reports lines={filtered} tab={reportTab} onTab={setReportTab} onItem={(name) => { setQuery(name); setMode('history'); setPage(0); }} /> : <><PurchaseHistory lines={filtered.slice(page * 50, page * 50 + 50)} /><div className="table-footer"><span>Lines: {filtered.length} · Invoices: {invoiceCount}</span><div className="pagination"><button className="text-button" disabled={page === 0} onClick={() => setPage(v => v - 1)}>Previous</button><span>{Math.min(page + 1, Math.ceil(filtered.length / 50))} / {Math.ceil(filtered.length / 50)}</span><button className="text-button" disabled={(page + 1) * 50 >= filtered.length} onClick={() => setPage(v => v + 1)}>Next</button></div></div></>}
-        </section>{mode !== 'reports' && !loading && itemTotals.length > 0 && <p className="page-note"><ShieldCheck size={15} />Records are saved to the shared database. This page updates every minute; refresh to see the latest purchases.</p>}
+      {mode === 'entry' ? <EntryForm userId={session.user.id} items={items} suppliers={suppliers} onDirty={setDirty} onSaving={setSaving} onSaved={(date) => { setDirty(false); setSaving(false); setMonth(date.slice(0, 7)); setAllDates(false); setQuery(''); setSupplier(''); setPage(0); setNotice('Purchase saved.'); setRoute({ area: 'staff', mode: 'history' }); refresh(); }} /> : <>
+        {mode === 'dashboard' && <div className="dashboard-toolbar"><label>Purchase month<input type="month" value={month} onChange={e => { if (e.target.value) setMonth(e.target.value); }} /></label>{actions}</div>}
+        <section className={`stats${management ? ' management-stats' : ''}`} aria-label="Purchase summary"><Stat title={allDates ? 'Selected spending' : 'Monthly spending'} value={unresolved ? '—' : money(totalAmount(filtered))} detail={management ? 'Restaurant purchases · MYR' : 'My purchases · MYR'} icon={<Wallet size={21} />} primary /><Stat title="Invoices" value={unresolved ? '—' : String(invoiceCount)} detail="Each invoice is counted once" icon={<ClipboardList size={21} />} />{management && <Stat title="Suppliers" value={unresolved ? '—' : String(supplierTotals.length)} detail="Suppliers with purchases" icon={<Store size={21} />} />}<Stat title="Items purchased" value={unresolved ? '—' : String(new Set(filtered.map(l => l.item_id)).size)} detail="Different purchased items" icon={<ShoppingBasket size={21} />} /></section>
+        {mode === 'dashboard' ? loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : !error && <ManagementDashboard lines={filtered} onPurchases={() => navigate('history')} onSupplier={supplierPurchases} onItem={itemPurchases} onPurchase={setPurchase} /> : <section className={`records-panel${mode === 'history' ? ' purchase-records' : ''}`}>
+          <div className="panel-heading"><div><h2>{mode === 'reports' ? 'Purchase summaries' : mode === 'suppliers' ? 'Supplier spending' : 'Purchase history'}</h2><p>{period}{query || supplier ? ' · Filtered' : ' · All purchases'}</p></div>{actions}</div>
+          <div className="filters data-filters">{mode !== 'suppliers' && <label className="filter-label search-filter"><span>Item search</span><span className="search-field"><Search size={17} aria-hidden="true" /><input aria-label="Search items" placeholder="e.g. Cooking Oil" value={query} onChange={e => setQuery(e.target.value)} /></span></label>}{mode !== 'suppliers' && <label className="filter-label"><span>Supplier</span><select aria-label="Filter suppliers" value={supplier} onChange={e => setSupplier(e.target.value)}><option value="">All suppliers</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>}<label className="filter-label"><span>Purchase month</span><input type="month" value={month} disabled={allDates} onChange={e => { if (e.target.value) setMonth(e.target.value); }} /></label>{mode === 'history' && <label className="check-label"><input type="checkbox" checked={allDates} onChange={e => setAllDates(e.target.checked)} />All dates</label>}{(query || supplier || allDates) && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}</div>
+          {loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : error ? <div className="empty"><p>Unable to load records. Please try again.</p></div> : !filtered.length ? <div className="empty"><span className="empty-icon"><ShoppingBasket size={28} /></span><h3>{query || supplier ? 'No matching purchases' : 'No purchases in this period yet'}</h3><p>{query || supplier ? 'Try another item name, supplier or month.' : management ? 'Staff purchases will appear here after they are saved.' : 'Add your first invoice to start tracking purchases.'}</p>{query || supplier ? <button className="secondary" onClick={clearFilters}>Clear filters</button> : <button className="secondary" onClick={() => navigate('entry')}><Plus size={16} />{management ? 'Open staff workspace' : 'Add your first purchase'}</button>}</div> : mode === 'reports' ? <Reports lines={filtered} tab={reportTab} onTab={setReportTab} onItem={itemPurchases} /> : mode === 'suppliers' ? <SupplierOverview lines={filtered} onSupplier={supplierPurchases} /> : <><PurchaseHistory lines={filtered.slice(page * 50, page * 50 + 50)} onPurchase={line => setPurchase(lines.filter(item => item.purchase_id === line.purchase_id))} /><div className="table-footer"><span>Lines: {filtered.length} · Invoices: {invoiceCount}</span><div className="pagination"><button className="text-button" disabled={page === 0} onClick={() => setPage(v => v - 1)}>Previous</button><span>{Math.min(page + 1, Math.ceil(filtered.length / 50))} / {Math.ceil(filtered.length / 50)}</span><button className="text-button" disabled={(page + 1) * 50 >= filtered.length} onClick={() => setPage(v => v + 1)}>Next</button></div></div></>}
+        </section>}
+        {!loading && !error && itemTotals.length > 0 && <p className="page-note"><ShieldCheck size={15} />{management ? 'Shared restaurant records' : 'Your purchase records'} · Refreshes every minute. Use refresh to check for new purchases.</p>}
       </>}
-      <footer className="footer"><span>Restaurant Ledger · Clear records. Better business.</span><span>MYR · Malaysia</span></footer></div></main></div>;
+      <footer className="footer"><span>Restaurant Ledger · {management ? 'Management workspace' : 'Staff workspace'}</span><span>MYR · Malaysia</span></footer>
+    </div></main>{purchase && <PurchaseDetails lines={purchase} onClose={() => setPurchase(null)} />}
+  </div>;
 }
 
 function Stat({ title, value, detail, icon, primary }: { title: string; value: string; detail: string; icon: ReactNode; primary?: boolean }) {

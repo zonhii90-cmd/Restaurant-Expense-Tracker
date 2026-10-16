@@ -20,7 +20,7 @@ export default function ReceiptViewer({ purchase, onClose }: { purchase: Purchas
     request.current.promise.then(value => { if (active) setUrl(value); }).catch(() => { if (active) setError('Unable to load receipt. Check your connection and try again.'); });
     return () => { active = false; };
   }, [purchase.receipt_path, version]);
-  return <dialog ref={dialog} className="receipt-dialog" aria-labelledby="receipt-view-title" onClose={onClose}>
+  return <dialog ref={dialog} className="receipt-dialog" aria-labelledby="receipt-view-title" onClose={event => { if (event.target === event.currentTarget) onClose(); }}>
     <header><div><h2 id="receipt-view-title">Receipt photo</h2><p>{purchase.supplier_name} · {dateLabel(purchase.purchase_date)}</p></div><button ref={closeButton} type="button" className="icon-button" aria-label="Close receipt" onClick={() => dialog.current?.close()}><X aria-hidden="true" size={22} /></button></header>
     {error ? <div className="receipt-loading"><p role="alert">{error}</p><button type="button" className="secondary" onClick={() => setVersion(v => v + 1)}>Try again</button></div> : url ? <><div className="receipt-image"><img src={url} alt={`Receipt from ${purchase.supplier_name} on ${dateLabel(purchase.purchase_date)}`} onError={() => setError('This receipt could not be displayed. Try loading it again.')} /></div><a className="secondary receipt-fullsize" href={url} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden="true" size={16} />Open full size</a></> : <p className="receipt-loading" role="status"><Loader2 aria-hidden="true" size={20} className="spin" />Loading receipt…</p>}
   </dialog>;

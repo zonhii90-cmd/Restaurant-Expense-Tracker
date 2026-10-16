@@ -1,7 +1,8 @@
 # Restaurant Ledger · Restaurant Expense Tracker
 
 An English-language, mobile-friendly browser app for one restaurant. Staff enter
-their purchases; managers see all restaurant purchases. Amounts are in Malaysian
+their purchases in a dedicated staff workspace; managers review all restaurant
+purchases in a separate management workspace. Amounts are in Malaysian
 ringgit, with calendar dates based on Asia/Kuching.
 
 ## Implemented
@@ -20,6 +21,24 @@ ringgit, with calendar dates based on Asia/Kuching.
 - Phone layouts use fixed bottom navigation, readable purchase/report cards and
   a persistent total/save bar. Inputs use 16px text on phones to avoid iOS focus
   zoom. Adding an item focuses its name; saved invoices offer an Add another action.
+
+## Staff and management workspaces
+
+- Staff accounts open **Add a purchase** by default. Navigation contains only
+  **Add purchase** and **My purchases**; the staff record request is scoped to the
+  current account, including when a manager uses this workspace.
+- Manager accounts open **Dashboard** by default, with monthly spending, invoice,
+  supplier and item counts, recent invoices and ranked supplier/item spending.
+  Management navigation has **Dashboard**, **Purchases**, **Monthly reports** and
+  **Suppliers**. Supplier/item drill-down opens filtered purchase records.
+- Managers can use **Staff workspace** to enter an invoice and **Back to management**
+  to return. Switching with unsaved changes requires a discard confirmation.
+- **View purchase** opens every item from the complete invoice, even when the
+  visible list is filtered to one item. Receipt photos are available from the
+  list and the invoice details. Computer layouts use tables; phones use cards.
+- Bookmark `#/staff/add` or `#/management/dashboard` after the site URL. Staff
+  accounts cannot open management screens via bookmarks. Database RLS remains
+  the authority for record access; this UI update needs no new SQL migration.
 
 ## Development
 

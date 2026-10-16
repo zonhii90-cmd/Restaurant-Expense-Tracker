@@ -11,8 +11,8 @@ const initial: PurchaseLine[] = [
   { id: 'l1', purchase_id: 'p1', purchase_date: today(), invoice_number: 'INV-1', created_by: userId, supplier_id: supplier.id, supplier_name: supplier.name, item_id: oil.id, item_name: oil.name, quantity: 2, unit: 'tin', total_amount: 180, unit_price: 90 },
   { id: 'l2', purchase_id: 'p2', purchase_date: today(), invoice_number: 'INV-2', created_by: userId, supplier_id: supplier.id, supplier_name: supplier.name, item_id: oil.id, item_name: oil.name, quantity: 3, unit: 'tin', total_amount: 270, unit_price: 90 },
 ];
-async function backend(page: Page, role: 'manager' | 'staff' = 'manager', loggedIn = true) {
-  const records = [...initial];
+async function backend(page: Page, role: 'manager' | 'staff' = 'manager', loggedIn = true, extra: PurchaseLine[] = []) {
+  const records = [...initial, ...extra];
   const calls: Record<string, any>[] = [];
   if (loggedIn) await page.addInitScript(value => localStorage.setItem('sb-restaurant-test-auth-token', JSON.stringify(value)), session);
   await page.route('https://restaurant-test.supabase.co/**', async route => {
@@ -23,7 +23,10 @@ async function backend(page: Page, role: 'manager' | 'staff' = 'manager', logged
     else if (url.pathname.endsWith('/restaurant_members')) data = { active: true, role };
     else if (url.pathname.endsWith('/items')) data = [oil];
     else if (url.pathname.endsWith('/suppliers')) data = [supplier];
-    else if (url.pathname.endsWith('/purchase_history')) data = records;
+    else if (url.pathname.endsWith('/purchase_history')) {
+      const owner = url.searchParams.get('created_by')?.replace(/^eq\./, '');
+      data = records.filter(line => (!owner || line.created_by === owner) && (role === 'manager' || line.created_by === userId));
+    }
     else if ((url.pathname.endsWith('/restaurant_save_purchase') || url.pathname.endsWith('/restaurant_save_purchase_with_receipt'))) {
       const request = route.request().postDataJSON();
       calls.push(request);
@@ -47,8 +50,8 @@ test('manager can search, summarize, export an Excel file, and save a multi-item
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Purchase overview', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Purchases', exact: true }).click();
   await expect(page.getByText('RM 450.00', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/manager-overview.png', fullPage: true });
   await page.getByRole('textbox', { name: 'Search items' }).fill('cooking oil');
@@ -60,7 +63,7 @@ test('manager can search, summarize, export an Excel file, and save a multi-item
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export Excel' }).click();
   expect((await downloadEvent).suggestedFilename()).toMatch(/^restaurant-purchases-.*\.xlsx$/);
-  await page.getByRole('button', { name: 'Add purchase', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Staff workspace', exact: true }).click();
   await page.getByLabel('Supplier name').fill('ABC Trading');
   await page.getByLabel('Item 1 name').fill('Cooking Oil');
   await page.getByLabel('Item 1 quantity').fill('2');
@@ -77,6 +80,7 @@ test('manager can search, summarize, export an Excel file, and save a multi-item
   expect(calls[0].p_supplier).toBe('ABC Trading');
   await expect(page.getByRole('table').getByText('Flour')).toBeVisible();
   await expect(page.getByText('RM 655.00', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.getByRole('button', { name: 'Monthly reports' })).toBeInViewport();
@@ -88,10 +92,10 @@ test('manager can search, summarize, export an Excel file, and save a multi-item
 test('mobile staff can enter purchases without horizontal page overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await backend(page, 'staff');
-  await page.goto('/');
+  await page.goto('/#/staff/add');
   await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Monthly reports' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Purchase overview', exact: true }).click();
+  await page.getByRole('button', { name: 'My purchases', exact: true }).click();
   await expect(page.getByText('My purchases · MYR')).toBeVisible();
   const records = page.getByRole('list', { name: 'Purchase records' });
   await records.scrollIntoViewIfNeeded();
@@ -111,7 +115,7 @@ for (const width of [320, 360, 430]) {
     page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
     await page.goto('/');
     const nav = page.getByRole('navigation', { name: 'Main navigation' });
-    await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
     await nav.getByRole('button', { name: 'Monthly reports' }).click();
     const totals = page.getByRole('list', { name: 'Item totals' });
     await expect(totals.getByText('5 tin', { exact: true })).toBeVisible();
@@ -128,7 +132,7 @@ for (const width of [320, 360, 430]) {
     await expect(page.getByRole('list', { name: 'Supplier totals' }).getByText('ABC Trading')).toBeVisible();
     await page.getByRole('button', { name: 'Refresh records', exact: true }).click();
     await expect(page.getByRole('button', { name: 'By supplier', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await nav.getByRole('button', { name: 'Add purchase', exact: true }).click();
+    await page.getByRole('button', { name: 'Staff workspace', exact: true }).click();
     await page.getByLabel('Supplier name').fill('ABC Trading');
     await page.getByLabel('Item 1 name').fill('Cooking Oil');
     await page.getByLabel('Item 1 quantity').fill('2');
@@ -170,7 +174,7 @@ test('login form sends credentials and opens authenticated workspace', async ({ 
   await page.getByLabel('Email', { exact: true }).fill('manager@example.test');
   await page.getByLabel('Password', { exact: true }).fill('test-password-only');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
 });
 
 test('failed save keeps input and retries the same invoice ID', async ({ page }) => {
@@ -187,7 +191,7 @@ test('failed save keeps input and retries the same invoice ID', async ({ page })
       await route.fallback();
     }
   });
-  await page.goto('/');
+  await page.goto('/#/staff/add');
   await page.getByRole('button', { name: 'Add purchase', exact: true }).first().click();
   await page.getByLabel('Supplier name').fill('ABC Trading');
   await page.getByLabel('Item 1 name').fill('Cooking Oil');
@@ -212,13 +216,13 @@ test('small-phone sign-in fits the screen and uses readable input text', async (
   await page.getByLabel('Password', { exact: true }).fill('test-password-only');
   const submit = page.getByRole('button', { name: 'Sign in', exact: true });
   await submit.click();
-  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
 });
 
 
-test('purchase form is the default, with one primary action and optional details', async ({ page }) => {
+test('staff purchase form has one primary action and optional details', async ({ page }) => {
   await backend(page);
-  await page.goto('/');
+  await page.goto('/#/staff/add');
   await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
   await expect(page.locator('.entry-assurance')).toContainText('Approved restaurant accounts only');
   await expect(page.locator('.primary:visible')).toHaveCount(1);
@@ -275,7 +279,7 @@ for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     const calls = await backend(page);
     const { uploads, signs } = await mockStorage(page);
-    await page.goto('/');
+    await page.goto('/#/staff/add');
     await fillPurchase(page);
     await expect(page.getByLabel('Take receipt photo')).toHaveAttribute('capture', 'environment');
     await expect(page.getByLabel('Choose receipt photo')).not.toHaveAttribute('capture');
@@ -307,7 +311,7 @@ test('failed receipt upload preserves the photo and fields and does not submit a
   await page.setViewportSize({ width: 360, height: 812 });
   const calls = await backend(page);
   const { uploads } = await mockStorage(page, true, true);
-  await page.goto('/');
+  await page.goto('/#/staff/add');
   await fillPurchase(page);
   await page.getByLabel('Take receipt photo').setInputFiles(receiptFile);
   await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
@@ -337,7 +341,7 @@ test('retry after invoice failure reuses the uploaded photo and stable invoice I
       await route.fallback();
     }
   });
-  await page.goto('/');
+  await page.goto('/#/staff/add');
   await fillPurchase(page);
   await page.getByLabel('Choose receipt photo').setInputFiles(receiptFile);
   await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
@@ -353,7 +357,7 @@ test('retry after invoice failure reuses the uploaded photo and stable invoice I
 test('invalid photos preserve the selection and removal saves an invoice without a photo', async ({ page }) => {
   const calls = await backend(page);
   const { uploads } = await mockStorage(page);
-  await page.goto('/');
+  await page.goto('/#/staff/add');
   await fillPurchase(page);
   await page.getByLabel('Choose receipt photo').setInputFiles(receiptFile);
   await expect(page.getByAltText('Receipt photo preview')).toBeVisible();
@@ -367,4 +371,108 @@ test('invalid photos preserve the selection and removal saves an invoice without
   expect(uploads).toHaveLength(0);
   expect(calls).toHaveLength(1);
   expect(calls[0]).not.toHaveProperty('p_receipt_path');
+});
+
+const flourLine: PurchaseLine = { ...initial[1], id: 'l3', item_id: 'i2', item_name: 'Flour', quantity: 5, unit: 'kg', total_amount: 25, unit_price: 5 };
+for (const width of [320, 390, 1280]) {
+  test(`management ${width}px supports supplier drill-down and complete invoice details`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await backend(page, 'manager', true, [flourLine]);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
+    await expect(page.locator('.management-shell')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 475.00', { exact: true })).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Top items' }).getByText('Flour', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.screenshot({ path: `test-results/management-dashboard-${width}.png`, fullPage: true });
+    const nav = page.getByRole('navigation', { name: 'Main navigation' });
+    await nav.getByRole('button', { name: 'Suppliers', exact: true }).click();
+    await page.getByRole('button', { name: 'View purchases', exact: true }).click();
+    await expect(page.getByLabel('Filter suppliers')).toHaveValue('s1');
+    await page.getByRole('textbox', { name: 'Search items' }).fill('Flour');
+    await page.getByRole('button', { name: 'View purchase', exact: true }).click();
+    const details = page.getByRole('dialog', { name: 'Purchase details' });
+    await expect(details).toBeVisible();
+    await expect(details.getByRole('list', { name: 'Invoice items' }).getByRole('listitem')).toHaveCount(2);
+    await expect(details.getByText('Cooking Oil', { exact: true })).toBeVisible();
+    await expect(details.getByText('Flour', { exact: true })).toBeVisible();
+    await expect(details.getByText('RM 295.00', { exact: true })).toBeVisible();
+    await page.screenshot({ path: `test-results/management-purchase-${width}.png` });
+    await details.getByRole('button', { name: 'Close purchase details' }).click();
+    await expect(details).toHaveCount(0);
+    await nav.getByRole('button', { name: 'Dashboard', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 475.00', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  });
+}
+
+test('management sees all records while staff workspace requests only the current account records', async ({ page }) => {
+  const other = { ...flourLine, id: 'other-line', purchase_id: 'p3', created_by: '00000000-0000-4000-8000-000000000002' };
+  const queries: string[] = [];
+  page.on('request', request => { const url = new URL(request.url()); if (url.pathname.endsWith('/purchase_history')) queries.push(url.searchParams.get('created_by') || 'all'); });
+  await backend(page, 'manager', true, [other]);
+  await page.goto('/');
+  await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 475.00', { exact: true })).toBeVisible();
+  expect(queries.at(-1)).toBe('all');
+  await page.getByRole('button', { name: 'Staff workspace', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+  await expect(page.locator('.staff-shell')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Monthly reports' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'My purchases', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 450.00', { exact: true })).toBeVisible();
+  expect(queries.at(-1)).toBe(`eq.${userId}`);
+  await expect(page.getByRole('table').getByText('Flour')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 475.00', { exact: true })).toBeVisible();
+  expect(queries.at(-1)).toBe('all');
+});
+
+test('staff cannot open management URLs', async ({ page }) => {
+  await backend(page, 'staff');
+  await page.goto('/#/management/reports');
+  await expect(page.getByRole('heading', { name: 'Add a purchase.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back to management' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/staff\/add$/);
+});
+
+test('switching workspaces or changing the address preserves an unsaved purchase until confirmed', async ({ page }) => {
+  await backend(page);
+  await page.goto('/#/staff/add');
+  await page.getByLabel('Supplier name').fill('Draft supplier');
+  let allow = false;
+  const confirmations: string[] = [];
+  page.on('dialog', async dialog => { confirmations.push(dialog.message()); if (allow) await dialog.accept(); else await dialog.dismiss(); });
+  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByLabel('Supplier name')).toHaveValue('Draft supplier');
+  await page.evaluate(() => { window.location.hash = '#/management/dashboard'; });
+  await expect(page).toHaveURL(/#\/staff\/add$/);
+  await expect(page.getByLabel('Supplier name')).toHaveValue('Draft supplier');
+  expect(confirmations).toHaveLength(2);
+  await page.getByRole('button', { name: 'Add purchase', exact: true }).click();
+  expect(confirmations).toHaveLength(2);
+  allow = true;
+  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
+});
+
+test('a receipt opened from complete purchase details closes back to the invoice', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await backend(page);
+  await mockStorage(page);
+  const path = `${userId}/p2/receipt.jpg`;
+  await page.route('**/rest/v1/purchase_history*', route => route.fulfill({ json: [initial[0], { ...initial[1], receipt_path: path }, { ...flourLine, receipt_path: path }] }));
+  await page.goto('/#/management/purchases');
+  await page.getByRole('textbox', { name: 'Search items' }).fill('Flour');
+  await page.getByRole('button', { name: 'View purchase', exact: true }).click();
+  const details = page.getByRole('dialog', { name: 'Purchase details' });
+  await details.getByRole('button', { name: 'View receipt', exact: true }).click();
+  const photo = page.getByRole('dialog', { name: 'Receipt photo' });
+  await expect(photo.getByRole('img', { name: /^Receipt from / })).toHaveJSProperty('naturalWidth', 1);
+  await photo.getByRole('button', { name: 'Close receipt' }).click();
+  await expect(photo).toHaveCount(0);
+  await expect(details).toBeVisible();
+  await expect(details.getByRole('list', { name: 'Invoice items' }).getByRole('listitem')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
 });
