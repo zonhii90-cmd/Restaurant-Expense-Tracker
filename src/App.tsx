@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { ArrowDownToLine, ArrowUpRight, CheckCircle2, ChefHat, ClipboardList, LayoutDashboard, Store, FileBarChart2, Leaf, Loader2, LogOut, Plus, RefreshCw, Search, ShieldCheck, ShoppingBasket, Trash2, Wallet } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpRight, CheckCircle2, ChefHat, ClipboardList, LayoutDashboard, Store, Users, History, FileBarChart2, Leaf, Loader2, LogOut, Plus, RefreshCw, Search, ShieldCheck, ShoppingBasket, Trash2, Wallet } from 'lucide-react';
 import { configured, friendlyError, supabase } from './client';
 import { getCatalog, getHistory } from './api';
 import PurchaseHistory from './PurchaseHistory';
@@ -13,6 +13,8 @@ import { resolveWorkspace, workspaceHash, type Mode, type WorkspaceRoute } from 
 import ManagementDashboard from './ManagementDashboard';
 import SupplierOverview from './SupplierOverview';
 import PurchaseDetails from './PurchaseDetails';
+import StaffAccounts from './StaffAccounts';
+import LoginHistory from './LoginHistory';
 
 type Member = { active: boolean; role: 'manager' | 'staff' };
 function Spinner() { return <Loader2 size={18} className="spin" aria-label="Loading" />; }
@@ -46,11 +48,20 @@ export default function App() {
     if (!session || !supabase) return;
     let alive = true;
     setMemberLoading(true);
-    supabase.from('restaurant_members').select('active,role').eq('user_id', session.user.id).maybeSingle()
-      .then(({ data, error: queryError }) => {
-        if (alive) { setMember(data as Member | null); setError(queryError ? friendlyError(queryError) : ''); setMemberLoading(false); }
-      }, () => { if (alive) { setError('Unable to check account permissions. Please try again.'); setMemberLoading(false); } });
-    return () => { alive = false; };
+    const check = async (quiet = false) => {
+      try {
+        const { data, error: queryError } = await supabase!.from('restaurant_members').select('active,role').eq('user_id', session.user.id).maybeSingle();
+        if (alive) {
+          if (!queryError) setMember(data as Member | null);
+          if (!quiet) { setError(queryError ? friendlyError(queryError) : ''); setMemberLoading(false); }
+        }
+      } catch { if (alive && !quiet) { setError('Unable to check account permissions. Please try again.'); setMemberLoading(false); } }
+    };
+    void check();
+    const focus = () => { if (document.visibilityState === 'visible') void check(true); };
+    window.addEventListener('focus', focus);
+    const timer = setInterval(focus, 60000);
+    return () => { alive = false; window.removeEventListener('focus', focus); clearInterval(timer); };
   }, [session?.user.id, retry]);
   const logout = async () => {
     const { error: signoutError } = await supabase!.auth.signOut({ scope: 'local' });
@@ -86,6 +97,7 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
   const [route, setRoute] = useState<WorkspaceRoute>(() => resolveWorkspace(window.location.hash, manager));
   const { area, mode } = route;
   const management = manager && area === 'management';
+  useEffect(() => { if (!manager && area === 'management') setRoute({ area: 'staff', mode: 'entry' }); }, [manager, area]);
   const [month, setMonth] = useState(today().slice(0, 7));
   const [allDates, setAllDates] = useState(false);
   const [query, setQuery] = useState('');
@@ -132,7 +144,7 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
     return () => { clearInterval(interval); window.removeEventListener('focus', focus); };
   }, [mode, refresh]);
   useEffect(() => {
-    if (mode === 'entry') return;
+    if (mode === 'entry' || mode === 'staff' || mode === 'logins') return;
     let alive = true;
     setLoading(true); setError(''); setLines([]);
     getHistory(month, allDates, management ? undefined : session.user.id).then(data => {
@@ -184,11 +196,13 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
     { mode: 'history' as Mode, title: 'Purchases', short: 'Purchases', Icon: ClipboardList },
     { mode: 'reports' as Mode, title: 'Monthly reports', short: 'Reports', Icon: FileBarChart2 },
     { mode: 'suppliers' as Mode, title: 'Suppliers', short: 'Suppliers', Icon: Store },
+    { mode: 'staff' as Mode, title: 'Staff accounts', short: 'Staff', Icon: Users },
+    { mode: 'logins' as Mode, title: 'Login history', short: 'Logins', Icon: History },
   ] : [
     { mode: 'entry' as Mode, title: 'Add purchase', short: 'Add purchase', Icon: Plus },
     { mode: 'history' as Mode, title: 'My purchases', short: 'My purchases', Icon: ClipboardList },
   ];
-  const screenTitle = mode === 'entry' ? 'Add a purchase' : mode === 'dashboard' ? 'Dashboard' : mode === 'reports' ? 'Monthly reports' : mode === 'suppliers' ? 'Suppliers' : management ? 'Purchases' : 'My purchases';
+  const screenTitle = mode === 'staff' ? 'Staff accounts' : mode === 'logins' ? 'Login history' : mode === 'entry' ? 'Add a purchase' : mode === 'dashboard' ? 'Dashboard' : mode === 'reports' ? 'Monthly reports' : mode === 'suppliers' ? 'Suppliers' : management ? 'Purchases' : 'My purchases';
   const period = allDates ? 'All dates' : monthLabel(month);
   const unresolved = loading || Boolean(error);
   const actions = <div className="button-row"><button className="icon-button refresh" onClick={refresh} disabled={loading} aria-label="Refresh records" title="Refresh records">{loading ? <Spinner /> : <RefreshCw size={17} />}</button><button className="secondary" disabled={loading || exporting || !filtered.length} onClick={exportReport}>{exporting ? <Spinner /> : <ArrowDownToLine size={16} />}Export Excel</button></div>;
@@ -200,9 +214,9 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
     </aside>
     <main className="main"><div className="topbar"><span>{management ? 'Management workspace' : 'Staff workspace'}<span className="slash">/</span><strong>{screenTitle}</strong></span><span className="today">{dateLabel(today())} · Malaysia time</span></div><div className="main-content">
       <div className="workspace-strip"><span><ShieldCheck size={15} aria-hidden="true" />{management ? 'Management workspace' : 'Staff workspace'}</span>{manager && <button className="secondary workspace-switch" disabled={saving} onClick={() => go(management ? { area: 'staff', mode: 'entry' } : { area: 'management', mode: 'dashboard' })}>{management ? <Plus size={16} aria-hidden="true" /> : <LayoutDashboard size={16} aria-hidden="true" />}{management ? 'Staff workspace' : 'Back to management'}</button>}</div>
-      <header className="page-heading"><div><span className="eyebrow">{management ? 'RESTAURANT MANAGEMENT' : 'DAILY PURCHASES'}</span><h1>{screenTitle}<span className="heading-dot">.</span></h1><p>{mode === 'entry' ? 'One invoice. Add your items, check the total, then save.' : management ? 'Review spending, check invoices and find the records you need.' : 'Your saved purchases and receipt photos.'}</p></div>{!management && mode !== 'entry' && <button className="primary" onClick={() => navigate('entry')}><Plus size={18} />Add purchase</button>}</header>
+      <header className="page-heading"><div><span className="eyebrow">{management ? 'RESTAURANT MANAGEMENT' : 'DAILY PURCHASES'}</span><h1>{screenTitle}<span className="heading-dot">.</span></h1><p>{mode === 'staff' ? 'Create individual staff logins and manage restaurant access.' : mode === 'logins' ? 'See who signed in and when, with times shown for Malaysia.' : mode === 'entry' ? 'One invoice. Add your items, check the total, then save.' : management ? 'Review spending, check invoices and find the records you need.' : 'Your saved purchases and receipt photos.'}</p></div>{!management && mode !== 'entry' && <button className="primary" onClick={() => navigate('entry')}><Plus size={18} />Add purchase</button>}</header>
       {authError && <Message>{authError}</Message>}{notice && <Message success><CheckCircle2 size={18} /><span>{notice}</span><button className="text-button" onClick={() => navigate('entry')}>Add another</button></Message>}{error && <Message>{error}<button className="text-button" onClick={refresh}>Try again</button></Message>}
-      {mode === 'entry' ? <EntryForm userId={session.user.id} items={items} suppliers={suppliers} onDirty={setDirty} onSaving={setSaving} onSaved={(date) => { setDirty(false); setSaving(false); setMonth(date.slice(0, 7)); setAllDates(false); setQuery(''); setSupplier(''); setPage(0); setNotice('Purchase saved.'); setRoute({ area: 'staff', mode: 'history' }); refresh(); }} /> : <>
+      {management && mode === 'staff' ? <StaffAccounts onBusy={setSaving} /> : management && mode === 'logins' ? <LoginHistory /> : mode === 'entry' ? <EntryForm userId={session.user.id} items={items} suppliers={suppliers} onDirty={setDirty} onSaving={setSaving} onSaved={(date) => { setDirty(false); setSaving(false); setMonth(date.slice(0, 7)); setAllDates(false); setQuery(''); setSupplier(''); setPage(0); setNotice('Purchase saved.'); setRoute({ area: 'staff', mode: 'history' }); refresh(); }} /> : <>
         {mode === 'dashboard' && <div className="dashboard-toolbar"><label>Purchase month<input type="month" value={month} onChange={e => { if (e.target.value) setMonth(e.target.value); }} /></label>{actions}</div>}
         <section className={`stats${management ? ' management-stats' : ''}`} aria-label="Purchase summary"><Stat title={allDates ? 'Selected spending' : 'Monthly spending'} value={unresolved ? '—' : money(totalAmount(filtered))} detail={management ? 'Restaurant purchases · MYR' : 'My purchases · MYR'} icon={<Wallet size={21} />} primary /><Stat title="Invoices" value={unresolved ? '—' : String(invoiceCount)} detail="Each invoice is counted once" icon={<ClipboardList size={21} />} />{management && <Stat title="Suppliers" value={unresolved ? '—' : String(supplierTotals.length)} detail="Suppliers with purchases" icon={<Store size={21} />} />}<Stat title="Items purchased" value={unresolved ? '—' : String(new Set(filtered.map(l => l.item_id)).size)} detail="Different purchased items" icon={<ShoppingBasket size={21} />} /></section>
         {mode === 'dashboard' ? loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : !error && <ManagementDashboard lines={filtered} onPurchases={() => navigate('history')} onSupplier={supplierPurchases} onItem={itemPurchases} onPurchase={setPurchase} /> : <section className={`records-panel${mode === 'history' ? ' purchase-records' : ''}`}>

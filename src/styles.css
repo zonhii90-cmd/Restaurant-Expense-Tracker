@@ -409,3 +409,42 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
   .dashboard-toolbar input { width: 180px; flex-shrink: 0; margin-top: 0; }
   .dashboard-toolbar .button-row { margin-left: auto; }
 }
+
+/* Account administration and sign-in records. */
+.account-filters { display: flex; flex-wrap: wrap; gap: 16px; padding: 0 24px 20px; border-bottom: 1px solid #eee; }
+.account-filters label { flex: 1; min-width: 180px; max-width: 440px; color: #525252; font-size: 12px; }
+.account-filters input, .account-filters select { font-size: 14px; }
+.account-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.account-row-actions .secondary { font-size: 12px; min-height: 44px; padding: 10px; }
+.account-status { display: inline-block; border-radius: 5px; padding: 5px 8px; font-size: 12px; font-weight: 600; white-space: nowrap; line-height: 1.5; }
+.account-status.active { color: #205438; background: #eaf4ee; }
+.account-status.inactive { color: #793818; background: #fff0e5; }
+.account-hint { color: #626262; font-size: 12px; line-height: 1.7; }
+.account-email { color: #525252; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 12px; }
+.account-message { margin: 0 24px 18px; }
+.account-form { display: grid; gap: 18px; }
+.account-form label { font-size: 14px; color: #333; }
+.account-form input { min-height: 48px; font-size: 16px; }
+.account-form p, .account-form .message { margin: 0; }
+.history-explanation { margin: 0; padding: 16px 24px; border-bottom: 1px solid #eee; }
+.accounts-panel .table-scroll { overflow: auto; }
+@media (min-width: 741px) {
+  .management-shell .sidebar-note { display: none; }
+  .management-shell .profile { margin-top: auto; }
+}
+@media (max-width: 740px) {
+  .management-shell .sidebar nav { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); height: calc(128px + env(safe-area-inset-bottom)); }
+  .management-shell .main { padding-bottom: calc(148px + env(safe-area-inset-bottom)); }
+  .management-shell .sidebar nav .nav-link { min-height: 54px; }
+  .account-filters { padding: 0 16px 16px; gap: 12px; }
+  .account-filters label { min-width: 0; flex-basis: 100%; max-width: none; font-size: 13px; }
+  .account-filters input, .account-filters select { font-size: 16px; min-height: 48px; }
+  .accounts-panel .panel-heading { align-items: flex-start; flex-wrap: wrap; }
+  .accounts-panel .panel-heading .primary { min-height: 44px; font-size: 13px; padding: 10px 12px; }
+  .account-row-actions { margin-top: 12px; gap: 8px 12px; }
+  .account-row-actions .secondary { font-size: 13px; }
+  .account-message { margin: 0 16px 16px; }
+  .history-explanation { padding: 14px 16px; }
+  .account-dialog .detail-header h2 { font-size: 19px; }
+}
+.account-message.message.success { display: block; }

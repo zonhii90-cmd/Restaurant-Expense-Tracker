@@ -8,6 +8,9 @@ ringgit, with calendar dates based on Asia/Kuching.
 ## Implemented
 
 - Email/password login using Supabase Auth; approved staff and manager roles.
+- Manager staff-account creation, activation/deactivation and password resets via
+  a server-side Edge Function, plus server-recorded login history. Enable with
+  [the staff-account setup guide](docs/staff-accounts.md).
 - Supplier, date, optional invoice number and notes, and up to 100 item lines.
 - Optional receipt photo: phone camera or photo library, preview/removal before saving,
   private shared storage and a View receipt action in purchase history.
@@ -30,7 +33,7 @@ ringgit, with calendar dates based on Asia/Kuching.
 - Manager accounts open **Dashboard** by default, with monthly spending, invoice,
   supplier and item counts, recent invoices and ranked supplier/item spending.
   Management navigation has **Dashboard**, **Purchases**, **Monthly reports** and
-  **Suppliers**. Supplier/item drill-down opens filtered purchase records.
+  **Suppliers**, **Staff accounts** and **Login history**. Supplier/item drill-down opens filtered purchase records.
 - Managers can use **Staff workspace** to enter an invoice and **Back to management**
   to return. Switching with unsaved changes requires a discard confirmation.
 - **View purchase** opens every item from the complete invoice, even when the
@@ -38,7 +41,8 @@ ringgit, with calendar dates based on Asia/Kuching.
   list and the invoice details. Computer layouts use tables; phones use cards.
 - Bookmark `#/staff/add` or `#/management/dashboard` after the site URL. Staff
   accounts cannot open management screens via bookmarks. Database RLS remains
-  the authority for record access; this UI update needs no new SQL migration.
+  the authority for record access; account administration additionally requires `staff-accounts.sql` and the
+  `staff-admin` Edge Function; see the setup guide.
 
 ## Development
 

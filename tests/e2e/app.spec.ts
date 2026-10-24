@@ -476,3 +476,86 @@ test('a receipt opened from complete purchase details closes back to the invoice
   await page.keyboard.press('Escape');
   await expect(details).toHaveCount(0);
 });
+
+const staffAccountId='00000000-0000-4000-8000-000000000002';
+async function accountBackend(page:Page){
+ const accounts=[{user_id:userId,email:'manager@example.test',display_name:'Manager',role:'manager',active:true,created_at:new Date().toISOString(),last_sign_in_at:null},{user_id:staffAccountId,email:'cook@example.test',display_name:'Kitchen staff',role:'staff',active:true,created_at:new Date().toISOString(),last_sign_in_at:new Date(`${today()}T06:00:00Z`).toISOString()}];
+ const operations:Record<string,any>[]=[];
+ await page.route('**/rest/v1/rpc/restaurant_staff_directory*',route=>route.fulfill({json:accounts}));
+ await page.route('**/rest/v1/rpc/restaurant_set_staff_active',async route=>{const payload=route.request().postDataJSON();operations.push(payload);const target=accounts.find(a=>a.user_id===payload.p_user_id)!;target.active=payload.p_active;await route.fulfill({json:null});});
+ await page.route('**/functions/v1/staff-admin',async route=>{
+  const payload=route.request().postDataJSON();operations.push(payload);
+  expect(route.request().headers().authorization).toBe(`Bearer ${token}`);
+  if(payload.action==='create_staff')accounts.push({user_id:'00000000-0000-4000-8000-000000000003',email:payload.email,display_name:payload.display_name,role:'staff',active:true,created_at:new Date().toISOString(),last_sign_in_at:null});
+  await route.fulfill({json:{ok:true}});
+ });
+ await page.route('**/rest/v1/restaurant_login_history*',async route=>{
+  const url=new URL(route.request().url());const who=url.searchParams.get('user_id')?.replace('eq.','');
+  const data=[{id:'login-1',user_id:staffAccountId,email:'cook@example.test',display_name:'Kitchen staff',role_at_login:'staff',access_granted:true,signed_in_at:`${today()}T06:00:00Z`},{id:'login-2',user_id:userId,email:'manager@example.test',display_name:'Manager',role_at_login:'manager',access_granted:true,signed_in_at:`${today()}T05:00:00Z`}].filter(row=>!who||row.user_id===who);
+  expect(url.searchParams.get('signed_in_at')).toContain('+08:00');
+  await route.fulfill({json:data,headers:{'Content-Range':`0-${data.length-1}/${data.length}`,'Access-Control-Expose-Headers':'Content-Range'}});
+ });
+ return {accounts,operations};
+}
+for(const width of [320,1280]){
+ test(`manager ${width}px can create staff, reset a password, deactivate and inspect login records`,async({page})=>{
+  await page.setViewportSize({width,height:900});await backend(page);const {operations}=await accountBackend(page);
+  await page.goto('/#/management/staff');
+  await expect(page.getByRole('heading',{name:'Staff accounts.'})).toBeVisible();
+  await page.getByLabel('Account status').selectOption('inactive');
+  await page.getByRole('button',{name:'Add staff',exact:true}).click();
+  const form=page.getByRole('dialog',{name:'Create staff account'});
+  await form.getByLabel('Staff name').fill('New staff');await form.getByLabel('Staff email').fill('new@example.test');await form.getByLabel('Initial password').fill('test-password-12345');
+  await form.getByRole('button',{name:'Create account',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText('Staff account created');
+  await expect(form).toHaveCount(0);await expect(page.getByLabel('Account status')).toHaveValue('all');expect(operations[0].action).toBe('create_staff');expect(operations[0]).not.toHaveProperty('role');
+  await page.getByRole('button',{name:'Reset password for new@example.test',exact:true}).click();
+  const reset=page.getByRole('dialog',{name:'Reset staff password'});await reset.getByLabel('New password').fill('replacement-password-123');await reset.getByRole('button',{name:'Save new password'}).click();
+  await expect(page.getByRole('status')).toContainText('Staff password updated');expect(operations[1].action).toBe('reset_password');
+  page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Deactivate new@example.test',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText('deactivated');expect(operations[2].p_active).toBe(false);
+  await page.getByLabel('Account status').selectOption('inactive');
+  await expect(page.getByRole('button',{name:'Activate new@example.test',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await page.evaluate(()=>window.scrollTo(0,0));
+  await page.screenshot({path:`test-results/staff-accounts-${width}.png`,fullPage:true});
+  const nav=page.getByRole('navigation',{name:'Main navigation'});
+  await nav.getByRole('button',{name:'Login history',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Login history.'})).toBeVisible();
+  await page.getByLabel('Account',{exact:true}).selectOption(staffAccountId);
+  const records=width<741?page.getByRole('list',{name:'Login records'}):page.getByRole('table');
+  await expect(records.getByText('Kitchen staff',{exact:true})).toBeVisible();await expect(records.getByText(/14:00:00/)).toBeVisible();
+  await expect(page.getByText('1 sign-in',{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await page.screenshot({path:`test-results/login-history-${width}.png`,fullPage:true});
+ });
+}
+test('account setup errors do not pretend there are no accounts or sign-ins',async({page})=>{
+ await backend(page);await page.route('**/rest/v1/rpc/restaurant_staff_directory*',route=>route.fulfill({status:404,json:{code:'PGRST202',message:'missing function'}}));
+ await page.goto('/#/management/staff');await expect(page.getByRole('alert')).toContainText('not ready');await expect(page.getByRole('button',{name:'Add staff',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'Login history',exact:true}).click();await expect(page.getByRole('alert')).toContainText('not ready');await expect(page.getByText('No sign-ins in this period',{exact:true})).toHaveCount(0);
+});
+test('staff links cannot open account administration or login history, and deactivation locks an existing workspace',async({page})=>{
+ await backend(page,'staff');
+ await page.goto('/#/management/staff');await expect(page.getByRole('heading',{name:'Add a purchase.'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Staff accounts',exact:true})).toHaveCount(0);
+ await page.evaluate(()=>{location.hash='#/management/logins';});await expect(page).toHaveURL(/#\/staff\/add$/);
+ await expect(page.getByRole('heading',{name:'Add a purchase.'})).toBeVisible();
+ await page.route('**/rest/v1/restaurant_members*',route=>route.fulfill({json:{active:false,role:'staff'}}));
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await expect(page.getByRole('heading',{name:'Waiting for account approval'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Save purchase',exact:true})).toHaveCount(0);
+});
+
+
+test('an undeployed account function preserves entered fields and never reports a created account',async({page})=>{
+ await backend(page);const {accounts}=await accountBackend(page);
+ await page.route('**/functions/v1/staff-admin',route=>route.fulfill({status:404,json:{code:'NOT_FOUND',message:'Function not found'}}));
+ await page.goto('/#/management/staff');await page.getByRole('button',{name:'Add staff',exact:true}).click();
+ const form=page.getByRole('dialog',{name:'Create staff account'});
+ await form.getByLabel('Staff name').fill('Pending staff');await form.getByLabel('Staff email').fill('pending@example.test');await form.getByLabel('Initial password').fill('test-password-12345');
+ await form.getByRole('button',{name:'Create account',exact:true}).click();
+ await expect(form.getByRole('alert')).toContainText('not ready');await expect(form.getByLabel('Staff email')).toHaveValue('pending@example.test');
+ expect(accounts).toHaveLength(2);await expect(page.getByRole('status')).toHaveCount(0);
+ await form.getByRole('button',{name:'Close account form'}).click();await expect(form).toHaveCount(0);
+});

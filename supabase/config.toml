@@ -1,0 +1,5 @@
+project_id = "restaurant-expense-tracker"
+
+# staff-admin validates the caller with Auth and checks current manager membership.
+[functions.staff-admin]
+verify_jwt = false
