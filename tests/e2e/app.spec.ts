@@ -80,7 +80,8 @@ test('manager can search, summarize, export an Excel file, and save a multi-item
   expect(calls[0].p_supplier).toBe('ABC Trading');
   await expect(page.getByRole('table').getByText('Flour')).toBeVisible();
   await expect(page.getByText('RM 655.00', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Back to management', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { window.location.hash = '#/management/dashboard'; });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.getByRole('button', { name: 'Monthly reports' })).toBeInViewport();
@@ -422,7 +423,8 @@ test('management sees all records while staff workspace requests only the curren
   await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 450.00', { exact: true })).toBeVisible();
   expect(queries.at(-1)).toBe(`eq.${userId}`);
   await expect(page.getByRole('table').getByText('Flour')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Back to management', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { window.location.hash = '#/management/dashboard'; });
   await expect(page.getByRole('region', { name: 'Purchase summary' }).getByText('RM 475.00', { exact: true })).toBeVisible();
   expect(queries.at(-1)).toBe('all');
 });
@@ -443,7 +445,9 @@ test('switching workspaces or changing the address preserves an unsaved purchase
   let allow = false;
   const confirmations: string[] = [];
   page.on('dialog', async dialog => { confirmations.push(dialog.message()); if (allow) await dialog.accept(); else await dialog.dismiss(); });
-  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Back to management', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { window.location.hash = '#/management/dashboard'; });
+  await expect(page).toHaveURL(/#\/staff\/add$/);
   await expect(page.getByLabel('Supplier name')).toHaveValue('Draft supplier');
   await page.evaluate(() => { window.location.hash = '#/management/dashboard'; });
   await expect(page).toHaveURL(/#\/staff\/add$/);
@@ -452,7 +456,8 @@ test('switching workspaces or changing the address preserves an unsaved purchase
   await page.getByRole('button', { name: 'Add purchase', exact: true }).click();
   expect(confirmations).toHaveLength(2);
   allow = true;
-  await page.getByRole('button', { name: 'Back to management', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Back to management', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { window.location.hash = '#/management/dashboard'; });
   await expect(page.getByRole('heading', { name: 'Dashboard.' })).toBeVisible();
 });
 

@@ -34,8 +34,10 @@ ringgit, with calendar dates based on Asia/Kuching.
   supplier and item counts, recent invoices and ranked supplier/item spending.
   Management navigation has **Dashboard**, **Purchases**, **Monthly reports** and
   **Suppliers**, **Staff accounts** and **Login history**. Supplier/item drill-down opens filtered purchase records.
-- Managers can use **Staff workspace** to enter an invoice and **Back to management**
-  to return. Switching with unsaved changes requires a discard confirmation.
+- Managers can use **Staff workspace** to enter an invoice. The staff interface
+  has no link back to Management, even when a manager uses it. Managers return
+  through their separate management bookmark. Changing the address with unsaved
+  changes requires a discard confirmation; staff roles cannot enter Management.
 - **View purchase** opens every item from the complete invoice, even when the
   visible list is filtered to one item. Receipt photos are available from the
   list and the invoice details. Computer layouts use tables; phones use cards.
