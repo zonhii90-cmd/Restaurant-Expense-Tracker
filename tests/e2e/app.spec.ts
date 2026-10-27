@@ -564,3 +564,62 @@ test('an undeployed account function preserves entered fields and never reports 
  expect(accounts).toHaveLength(2);await expect(page.getByRole('status')).toHaveCount(0);
  await form.getByRole('button',{name:'Close account form'}).click();await expect(form).toHaveCount(0);
 });
+
+async function correctionBackend(page:Page,role:'staff'|'manager',pending=true){
+ await backend(page,role);
+ let purchase:any={id:'p1',date:today(),supplier:'ABC Trading',invoice:'INV-1',notes:'Keep receipt',receipt_path:null,created_by:userId,created_at:new Date().toISOString(),entered_by:'Alice',revision:1,status:'active',lines:[{id:'l1',item_id:'i1',name:'Cooking Oil',quantity:'2.000',unit:'tin',amount:'500.00'},{id:'l3',item_id:'i3',name:'Flour',quantity:'5.000',unit:'kg',amount:'25.00'}]};
+ const requests:any[]=pending?[{id:'r1',purchase_id:'p1',actor_name:'Alice',created_by:userId,purchase_revision:1,reason:'Cooking Oil should be RM 50',status:'pending',created_at:new Date().toISOString(),resolved_at:null,resolution:null}]:[];
+ const changes:any[]=[];const calls:any[]=[];
+ await page.route('**/rest/v1/purchase_history*',async route=>{const p=purchase;await route.fulfill({json:p.lines.map((l:any)=>({...initial[0],id:l.id,purchase_id:p.id,purchase_date:p.date,item_id:l.item_id,item_name:l.name,quantity:Number(l.quantity),unit:l.unit,total_amount:Number(l.amount),unit_price:Number(l.amount)/Number(l.quantity),status:p.status,revision:p.revision,notes:p.notes,entered_by:p.entered_by}))});});
+ await page.route('**/rest/v1/restaurant_correction_requests*',async route=>{const rows=requests.filter(r=>r.status==='pending');await route.fulfill({json:rows,headers:{'content-range':`0-${Math.max(0,rows.length-1)}/${rows.length}`,'access-control-expose-headers':'content-range'}});});
+ await page.route('**/rest/v1/rpc/restaurant_purchase_detail',async route=>route.fulfill({json:{purchase,requests,changes}}));
+ await page.route('**/rest/v1/rpc/restaurant_request_correction',async route=>{const body=route.request().postDataJSON();calls.push(body);requests.push({id:body.p_operation,purchase_id:purchase.id,actor_name:'Alice',reason:body.p_reason,status:'pending',created_at:new Date().toISOString(),purchase_revision:purchase.revision});await route.fulfill({status:204});});
+ await page.route('**/rest/v1/rpc/restaurant_resolve_purchase',async route=>{const body=route.request().postDataJSON();calls.push(body);const before=structuredClone(purchase);if(body.p_action==='corrected'){purchase={...purchase,...body.p_data,revision:purchase.revision+1,lines:body.p_data.lines.map((l:any,i:number)=>({...l,id:`new-${i}`,item_id:`i${i}`}))};}else if(body.p_action==='voided'){purchase={...purchase,status:'voided',revision:purchase.revision+1};}const r=requests.find(r=>r.status==='pending');if(r){r.status=body.p_action;r.resolution=body.p_reason;}changes.unshift({id:body.p_operation,actor_name:'Manager',action:body.p_action,reason:body.p_reason,created_at:new Date().toISOString(),before_data:before,after_data:structuredClone(purchase)});await route.fulfill({status:204});});
+ return {calls,requests};
+}
+
+test('phone staff submit an own-purchase correction request and cannot edit or void',async({page})=>{
+ await page.setViewportSize({width:320,height:812});const state=await correctionBackend(page,'staff',false);
+ await page.goto('/#/staff/purchases');await page.getByRole('list',{name:'Purchase records'}).getByRole('button',{name:'View purchase'}).first().click();
+ const dialog=page.getByRole('dialog',{name:'Purchase details'});
+ await expect(dialog.getByText('Alice',{exact:true})).toBeVisible();await expect(dialog.getByText('Keep receipt',{exact:true})).toBeVisible();
+ await expect(dialog.getByRole('button',{name:'Correct purchase',exact:true})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Void purchase',exact:true})).toHaveCount(0);
+ await dialog.getByRole('button',{name:'Request correction',exact:true}).click();await dialog.getByLabel('What needs correcting?').fill('Oil amount should be RM 50');
+ page.once('dialog',d=>d.dismiss());await dialog.getByRole('button',{name:'Close purchase details'}).click();await expect(dialog.getByLabel('What needs correcting?')).toHaveValue('Oil amount should be RM 50');
+ await dialog.getByRole('button',{name:'Submit request',exact:true}).click();await expect(dialog.getByText('Pending · Alice')).toBeVisible();
+ expect(state.calls).toHaveLength(1);expect(state.calls[0].p_revision).toBe(1);await expect(dialog.getByRole('button',{name:'Request correction',exact:true})).toHaveCount(0);
+ expect(await dialog.evaluate(e=>e.scrollWidth<=e.clientWidth)).toBeTruthy();await page.screenshot({path:'test-results/correction-staff-320.png'});
+});
+
+test('manager corrects the full invoice, reviews history, and voids it without counting it in totals',async({page})=>{
+ await page.setViewportSize({width:320,height:812});const state=await correctionBackend(page,'manager');
+ await page.goto('/#/management/purchases');await expect(page.getByRole('heading',{name:'Correction requests (1)'})).toBeVisible();
+ await page.getByRole('button',{name:'Review requests',exact:true}).click();await page.getByRole('button',{name:'Review purchase',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Purchase details'});await dialog.getByRole('button',{name:'Correct purchase',exact:true}).click();
+ await expect(dialog.getByRole('group',{name:'Item 2',exact:true}).getByLabel('Item name')).toHaveValue('Flour');
+ await dialog.getByRole('group',{name:'Item 1',exact:true}).getByLabel('Line total RM').fill('50.00');await dialog.getByLabel('Reason',{exact:true}).fill('Verified against receipt');
+ await dialog.getByRole('button',{name:'Review changes',exact:true}).click();await expect(dialog.getByRole('heading',{name:'Before correction'})).toBeVisible();await expect(dialog.getByRole('heading',{name:'After correction'})).toBeVisible();
+ expect(await dialog.evaluate(e=>e.scrollWidth<=e.clientWidth)).toBeTruthy();await page.screenshot({path:'test-results/correction-manager-320.png'});
+ await dialog.getByRole('button',{name:'Save correction',exact:true}).click();await expect(dialog.locator('.detail-total')).toContainText('RM 75.00');expect(state.calls[0].p_data.lines).toHaveLength(2);
+ await dialog.getByText(/Corrected · Manager/).click();await expect(dialog.getByRole('heading',{name:'Before',exact:true})).toBeVisible();
+ await dialog.getByRole('button',{name:'Void purchase',exact:true}).click();await dialog.getByLabel('Reason',{exact:true}).fill('Duplicate invoice');await dialog.getByRole('button',{name:'Void purchase',exact:true}).last().click();
+ await expect(dialog.getByText('Voided · Kept for reference. Excluded from purchase totals.')).toBeVisible();await dialog.getByRole('button',{name:'Close purchase details'}).click();
+ await expect(page.getByText('RM 0.00',{exact:true})).toBeVisible();await page.getByLabel('Purchase status').selectOption('all');await expect(page.getByRole('list',{name:'Purchase records'}).getByText('Voided · Excluded from totals')).toHaveCount(2);
+ await expect(page.getByText('RM 0.00',{exact:true})).toBeVisible();
+});
+
+test('manager declines a request without changing the purchase and stale saves require refresh',async({page})=>{
+ await correctionBackend(page,'manager');await page.goto('/#/management/purchases');await page.getByRole('table').getByRole('button',{name:'View purchase'}).first().click();
+ const dialog=page.getByRole('dialog',{name:'Purchase details'});await dialog.getByRole('button',{name:'Decline request',exact:true}).click();await dialog.getByLabel('Reason',{exact:true}).fill('Receipt confirms original amount');await dialog.getByRole('button',{name:'Decline request',exact:true}).last().click();await expect(dialog.getByText('Declined · Alice')).toBeVisible();await expect(dialog.locator('.detail-total')).toContainText('RM 525.00');
+ await page.route('**/rest/v1/rpc/restaurant_resolve_purchase',route=>route.fulfill({status:409,json:{code:'40001',message:'Purchase changed'}}));
+ await dialog.getByRole('button',{name:'Void purchase',exact:true}).click();await dialog.getByLabel('Reason',{exact:true}).fill('Duplicate');await dialog.getByRole('button',{name:'Void purchase',exact:true}).last().click();await expect(dialog.getByRole('alert')).toContainText('This purchase has changed.');await expect(dialog.getByRole('button',{name:'Refresh purchase',exact:true})).toBeVisible();await expect(dialog.getByLabel('Reason',{exact:true})).toBeDisabled();
+});
+
+
+test('missing correction migration gives a setup error without offering unprotected correction controls',async({page})=>{
+ await backend(page);await page.route('**/rest/v1/rpc/restaurant_purchase_detail',route=>route.fulfill({status:404,json:{code:'PGRST202',message:'Missing RPC'}}));
+ await page.goto('/#/management/purchases');await page.getByRole('table').getByRole('button',{name:'View purchase'}).first().click();
+ const dialog=page.getByRole('dialog',{name:'Purchase details'});await expect(dialog.getByRole('alert')).toContainText('Purchase corrections are not ready.');
+ await expect(dialog.getByRole('button',{name:'Correct purchase',exact:true})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Void purchase',exact:true})).toHaveCount(0);
+ await expect(dialog.locator('.detail-total')).toContainText('RM 180.00');
+});

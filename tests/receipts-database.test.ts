@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
-test('private receipts enforce account scope, immutable uploads, atomic linking and safe retry', async () => {
+for (const upgraded of [false,true]) test(`private receipts enforce account scope, immutable uploads, atomic linking and safe retry (corrections: ${upgraded})`, async () => {
   const db = new PGlite();
   const run = async (sql: string, args: unknown[] = []) => (await db.query<Record<string, any>>(sql, args)).rows;
   const read = (file: string) => readFileSync(new URL(`../supabase/${file}`, import.meta.url), 'utf8');
@@ -23,6 +23,7 @@ test('private receipts enforce account scope, immutable uploads, atomic linking 
       grant execute on function auth.uid() to authenticated, anon;`);
     await db.exec(read('setup.sql')); await db.exec(read('save-purchase.sql'));
     await db.exec(read('receipt-photos.sql'));
+    if(upgraded){await db.exec("alter table restaurant_members add column display_name text not null default ''");await db.exec(read('purchase-corrections.sql'));}
     const staff = '00000000-0000-4000-8000-000000000001';
     const other = '00000000-0000-4000-8000-000000000002';
     const manager = '00000000-0000-4000-8000-000000000003';
@@ -79,10 +80,18 @@ test('private receipts enforce account scope, immutable uploads, atomic linking 
     await assert.rejects(run('select * from storage.objects'));
     await assert.rejects(save(id, path));
     await db.exec('reset role');
-    // Existing installations and complete setup can both be safely rerun.
-    await db.exec(read('receipt-photos.sql'));
-    await db.exec(read('setup.sql')); await db.exec(read('save-purchase.sql'));
-    await db.exec(read('receipt-photos.sql'));
+    // Before corrections, the original setup remains rerunnable. Once upgraded,
+    // only rerun the latest migration: legacy view definitions omit new columns.
+    if(!upgraded){
+      await db.exec(read('receipt-photos.sql'));
+      await db.exec(read('setup.sql')); await db.exec(read('save-purchase.sql'));
+      await db.exec(read('receipt-photos.sql'));
+    }
+    if(upgraded){
+      await db.exec(read('purchase-corrections.sql'));
+      await asUser(manager,async()=>{await run("select restaurant_resolve_purchase(gen_random_uuid(),$1,1,'voided','Duplicate receipt',null,null)",[id]);});
+      await asUser(staff,async()=>{await save(id,path);assert.equal((await run('select status from purchases'))[0].status,'voided');assert.deepEqual((await run('select name from storage.objects')).map(o=>o.name),[path]);});
+    }
     assert.equal((await run('select * from purchases'))[0].receipt_path, path);
     assert.equal((await run("select public from storage.buckets where id='restaurant-receipts'"))[0].public, false);
   } finally { await db.close(); }

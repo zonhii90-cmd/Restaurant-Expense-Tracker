@@ -16,6 +16,9 @@ ringgit, with calendar dates based on Asia/Kuching.
   private shared storage and a View receipt action in purchase history.
 - Each line has item name, quantity, unit, line total and calculated unit price.
 - Atomic invoice saving and idempotent retries after an uncertain response.
+- In-app staff correction requests; manager correction, voiding and decline actions,
+  with immutable before/after history and active-only reports. Requires the
+  [purchase-corrections upgrade](docs/purchase-corrections-setup.md).
 - Purchase history, month/all-date filtering, item search, supplier filtering.
 - Manager monthly item totals grouped by unit, plus supplier spending summaries.
 - Real `.xlsx` export with detail, item summary and supplier summary worksheets.
@@ -72,7 +75,8 @@ key identifies the project; authentication and database policies protect records
 
 In Supabase SQL Editor, run `supabase/setup.sql` and then
 `supabase/save-purchase.sql`, then `supabase/receipt-photos.sql` to enable private
-receipt storage. Configure the first manager and staff as described
+receipt storage. Apply `supabase/staff-accounts.sql` and then
+`supabase/purchase-corrections.sql` last for accounts and protected correction flows. Configure the first manager and staff as described
 in [the database guide](supabase/README.md).
 
 ```sh
@@ -116,9 +120,14 @@ host's environment settings **before building**. Changing them requires a new
 build/deployment.
 
 The app does not depend on client-side URL routing. Configure Supabase's Auth
-Site URL to your production HTTPS address. Create approved users in the dashboard;
-password resets and membership management are handled there in this version.
+Site URL to your production HTTPS address. Configure the first manager in the
+Supabase dashboard. After the staff-account server setup, managers can create
+staff, reset staff passwords and activate/deactivate staff in Management;
+manager-account administration remains in the Supabase dashboard.
 Do not disable RLS to troubleshoot a login or saving error.
+
+For the current business scope, limitations and documentation discussion, see
+[the system overview](docs/current-system.md) and [domain glossary](GLOSSARY.md).
 
 ## Current handoff
 
@@ -128,8 +137,7 @@ the repository does not apply that migration. Local database tests run PostgreSQ
 and browser tests mock Supabase; neither establishes real-device synchronization
 or hosted Storage readiness.
 
-Tax accounting, multiple outlets, offline entry, invoice editing
-in the app and unit conversion are outside this first version. A carton and a
+Tax accounting, multiple outlets, offline entry, unit conversion are outside this first version. A carton and a
 tin are reported separately; no pack-size assumptions are made.
 
 ## Receipt photo setup

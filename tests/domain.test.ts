@@ -54,3 +54,15 @@ test('real Excel file contains detail and correctly calculated reports; text can
   assert.equal(detail.getCell('E6').numFmt, '#,##0.###');
   assert.equal(workbook.getWorksheet('Item summary')!.getCell('D2').value, 450);
 });
+
+
+test('voided records retain original Excel details but never inflate item or supplier summaries',async()=>{
+ const records=[base,{...base,id:'void-line',purchase_id:'void-purchase',status:'voided' as const,quantity:99,total_amount:9999,entered_by:'Alice',notes:'Duplicate'}];
+ assert.equal(summarizeItems(records)[0].quantity,2);assert.equal(summarizeSuppliers(records)[0].amount,180);
+ const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(await createWorkbook(records,'All dates'));
+ assert.equal(workbook.getWorksheet('Purchase details')!.getCell('G3').value,9999);
+ assert.equal(workbook.getWorksheet('Purchase details')!.getCell('I3').value,'Voided');
+ assert.equal(workbook.getWorksheet('Purchase details')!.getCell('J3').value,'Alice');
+ assert.equal(workbook.getWorksheet('Item summary')!.getCell('D2').value,180);
+ assert.equal(workbook.getWorksheet('Supplier summary')!.getCell('B2').value,180);
+});

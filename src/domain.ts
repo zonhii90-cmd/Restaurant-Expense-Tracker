@@ -8,6 +8,7 @@ export const UNITS = [
 export type Unit = typeof UNITS[number][0];
 export type CatalogEntry = { id: string; name: string };
 export type PurchaseLine = {
+  status?: 'active' | 'voided'; revision?: number; notes?: string | null; entered_by?: string;
   id: string; purchase_id: string; purchase_date: string; invoice_number: string | null;
   receipt_path?: string | null;
   created_by: string; supplier_id: string; supplier_name: string;
@@ -47,12 +48,13 @@ export function dateLabel(date: string) {
   const [y, m, d] = date.split('-');
   return `${d}/${m}/${y}`;
 }
+export function activeLines<T extends {status?: string}>(lines: T[]): T[] { return lines.filter(line => line.status !== 'voided'); }
 export function totalAmount(lines: Pick<PurchaseLine, 'total_amount'>[]) {
   return lines.reduce((sum, line) => sum + Math.round(Number(line.total_amount) * 100), 0) / 100;
 }
 export function summarizeItems(lines: PurchaseLine[]): ItemSummary[] {
   const groups = new Map<string, { item: string; itemId: string; unit: Unit; mills: number; cents: number; count: number }>();
-  for (const line of lines) {
+  for (const line of activeLines(lines)) {
     const key = `${line.item_id}:${line.unit}`;
     const value = groups.get(key) ?? { item: line.item_name, itemId: line.item_id, unit: line.unit, mills: 0, cents: 0, count: 0 };
     value.mills += Math.round(Number(line.quantity) * 1000);
@@ -65,7 +67,7 @@ export function summarizeItems(lines: PurchaseLine[]): ItemSummary[] {
 }
 export function summarizeSuppliers(lines: PurchaseLine[]): SupplierSummary[] {
   const groups = new Map<string, { supplier: string; cents: number; invoices: Set<string> }>();
-  for (const line of lines) {
+  for (const line of activeLines(lines)) {
     const value = groups.get(line.supplier_id) ?? { supplier: line.supplier_name, cents: 0, invoices: new Set<string>() };
     value.cents += Math.round(Number(line.total_amount) * 100);
     value.invoices.add(line.purchase_id);

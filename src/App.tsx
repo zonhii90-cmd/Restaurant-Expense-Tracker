@@ -7,12 +7,14 @@ import PurchaseHistory from './PurchaseHistory';
 import Reports from './Reports';
 import ReceiptPhotoField from './ReceiptPhotoField';
 import { receiptPath, uploadReceipt, type ReceiptPhoto } from './receipts';
-import { dateLabel, filterLines, money, monthLabel, quantity, summarizeItems, summarizeSuppliers, today, totalAmount, UNITS, validateDraft, type CatalogEntry, type DraftLine, type PurchaseLine } from './domain';
+import { activeLines, dateLabel, filterLines, money, monthLabel, quantity, summarizeItems, summarizeSuppliers, today, totalAmount, UNITS, validateDraft, type CatalogEntry, type DraftLine, type PurchaseLine } from './domain';
 
 import { resolveWorkspace, workspaceHash, type Mode, type WorkspaceRoute } from './workspaces';
 import ManagementDashboard from './ManagementDashboard';
 import SupplierOverview from './SupplierOverview';
 import PurchaseDetails from './PurchaseDetails';
+import CorrectionInbox from './CorrectionInbox';
+import {purchaseDetail,snapshotLines} from './corrections';
 import StaffAccounts from './StaffAccounts';
 import LoginHistory from './LoginHistory';
 
@@ -100,6 +102,7 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
   useEffect(() => { if (!manager && area === 'management') setRoute({ area: 'staff', mode: 'entry' }); }, [manager, area]);
   const [month, setMonth] = useState(today().slice(0, 7));
   const [allDates, setAllDates] = useState(false);
+  const [purchaseStatus,setPurchaseStatus]=useState('active');
   const [query, setQuery] = useState('');
   const [supplier, setSupplier] = useState('');
   const [lines, setLines] = useState<PurchaseLine[]>([]);
@@ -132,7 +135,7 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
         return;
       }
       setRoute(next); setDirty(false); setNotice(''); setError(''); setPurchase(null);
-      setQuery(''); setSupplier(''); setAllDates(false); setPage(0);
+      setQuery(''); setSupplier(''); setAllDates(false); setPurchaseStatus('active'); setPage(0);
     };
     window.addEventListener('hashchange', change);
     return () => window.removeEventListener('hashchange', change);
@@ -164,15 +167,17 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
-  useEffect(() => { setPage(0); }, [query, supplier, month, allDates]);
-  const filtered = useMemo(() => filterLines(lines, query, supplier), [lines, query, supplier]);
+  useEffect(() => { setPage(0); }, [query, supplier, month, allDates,purchaseStatus]);
+  const filtered = useMemo(() => filterLines(lines, query, supplier).filter(line=>mode==='history' ? purchaseStatus==='all' || (line.status || 'active')===purchaseStatus : line.status!=='voided'), [lines, query, supplier,mode,purchaseStatus]);
+  const effective=useMemo(()=>activeLines(filtered),[filtered]);
   const itemTotals = useMemo(() => summarizeItems(filtered), [filtered]);
   const supplierTotals = useMemo(() => summarizeSuppliers(filtered), [filtered]);
-  const invoiceCount = new Set(filtered.map(l => l.purchase_id)).size;
+  const invoiceCount = new Set(effective.map(l => l.purchase_id)).size;
   useEffect(() => { setPage(current => Math.min(current, Math.max(0, Math.ceil(filtered.length / 50) - 1))); }, [filtered.length]);
   function go(next: WorkspaceRoute) {
     if (saving || (next.area === area && next.mode === mode) || (!manager && next.area === 'management')) return;
     if (dirty && !window.confirm('This purchase has not been saved. Leave this page?')) return;
+    if(next.mode==='history') setPurchaseStatus('active');
     setDirty(false); setRoute(next); setNotice(''); setError(''); setPurchase(null);
     if (next.mode !== 'history') setAllDates(false);
     if (next.area !== area || next.mode === 'dashboard' || next.mode === 'suppliers') { setQuery(''); setSupplier(''); setAllDates(false); }
@@ -182,7 +187,7 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
   }
   function supplierPurchases(id: string) { navigate('history'); setQuery(''); setSupplier(id); setPage(0); }
   function itemPurchases(name: string) { navigate('history'); setSupplier(''); setQuery(name); setPage(0); }
-  function clearFilters() { setQuery(''); setSupplier(''); setAllDates(false); }
+  function clearFilters() { setPurchaseStatus('active'); setQuery(''); setSupplier(''); setAllDates(false); }
   async function exportReport() {
     setExporting(true); setError('');
     try {
@@ -216,18 +221,19 @@ function Workspace({ session, member, logout, authError }: { session: Session; m
       <div className="workspace-strip"><span><ShieldCheck size={15} aria-hidden="true" />{management ? 'Management workspace' : 'Staff workspace'}</span>{management && <button className="secondary workspace-switch" disabled={saving} onClick={() => go({ area: 'staff', mode: 'entry' })}><Plus size={16} aria-hidden="true" />Staff workspace</button>}</div>
       <header className="page-heading"><div><span className="eyebrow">{management ? 'RESTAURANT MANAGEMENT' : 'DAILY PURCHASES'}</span><h1>{screenTitle}<span className="heading-dot">.</span></h1><p>{mode === 'staff' ? 'Create individual staff logins and manage restaurant access.' : mode === 'logins' ? 'See who signed in and when, with times shown for Malaysia.' : mode === 'entry' ? 'One invoice. Add your items, check the total, then save.' : management ? 'Review spending, check invoices and find the records you need.' : 'Your saved purchases and receipt photos.'}</p></div>{!management && mode !== 'entry' && <button className="primary" onClick={() => navigate('entry')}><Plus size={18} />Add purchase</button>}</header>
       {authError && <Message>{authError}</Message>}{notice && <Message success><CheckCircle2 size={18} /><span>{notice}</span><button className="text-button" onClick={() => navigate('entry')}>Add another</button></Message>}{error && <Message>{error}<button className="text-button" onClick={refresh}>Try again</button></Message>}
-      {management && mode === 'staff' ? <StaffAccounts onBusy={setSaving} /> : management && mode === 'logins' ? <LoginHistory /> : mode === 'entry' ? <EntryForm userId={session.user.id} items={items} suppliers={suppliers} onDirty={setDirty} onSaving={setSaving} onSaved={(date) => { setDirty(false); setSaving(false); setMonth(date.slice(0, 7)); setAllDates(false); setQuery(''); setSupplier(''); setPage(0); setNotice('Purchase saved.'); setRoute({ area: 'staff', mode: 'history' }); refresh(); }} /> : <>
+      {management && mode === 'staff' ? <StaffAccounts onBusy={setSaving} /> : management && mode === 'logins' ? <LoginHistory /> : mode === 'entry' ? <EntryForm userId={session.user.id} items={items} suppliers={suppliers} onDirty={setDirty} onSaving={setSaving} onSaved={(date) => { setDirty(false); setSaving(false); setMonth(date.slice(0, 7)); setPurchaseStatus('active'); setAllDates(false); setQuery(''); setSupplier(''); setPage(0); setNotice('Purchase saved.'); setRoute({ area: 'staff', mode: 'history' }); refresh(); }} /> : <>
+        {management && (mode==='dashboard' || mode==='history') && <CorrectionInbox version={version} onOpen={async id=>{setPurchase(snapshotLines((await purchaseDetail(id)).purchase));}}/>}
         {mode === 'dashboard' && <div className="dashboard-toolbar"><label>Purchase month<input type="month" value={month} onChange={e => { if (e.target.value) setMonth(e.target.value); }} /></label>{actions}</div>}
-        <section className={`stats${management ? ' management-stats' : ''}`} aria-label="Purchase summary"><Stat title={allDates ? 'Selected spending' : 'Monthly spending'} value={unresolved ? '—' : money(totalAmount(filtered))} detail={management ? 'Restaurant purchases · MYR' : 'My purchases · MYR'} icon={<Wallet size={21} />} primary /><Stat title="Invoices" value={unresolved ? '—' : String(invoiceCount)} detail="Each invoice is counted once" icon={<ClipboardList size={21} />} />{management && <Stat title="Suppliers" value={unresolved ? '—' : String(supplierTotals.length)} detail="Suppliers with purchases" icon={<Store size={21} />} />}<Stat title="Items purchased" value={unresolved ? '—' : String(new Set(filtered.map(l => l.item_id)).size)} detail="Different purchased items" icon={<ShoppingBasket size={21} />} /></section>
+        <section className={`stats${management ? ' management-stats' : ''}`} aria-label="Purchase summary"><Stat title={allDates ? 'Selected spending' : 'Monthly spending'} value={unresolved ? '—' : money(totalAmount(effective))} detail={management ? 'Restaurant purchases · MYR' : 'My purchases · MYR'} icon={<Wallet size={21} />} primary /><Stat title="Invoices" value={unresolved ? '—' : String(invoiceCount)} detail="Each invoice is counted once" icon={<ClipboardList size={21} />} />{management && <Stat title="Suppliers" value={unresolved ? '—' : String(supplierTotals.length)} detail="Suppliers with purchases" icon={<Store size={21} />} />}<Stat title="Items purchased" value={unresolved ? '—' : String(new Set(effective.map(l => l.item_id)).size)} detail="Different purchased items" icon={<ShoppingBasket size={21} />} /></section>
         {mode === 'dashboard' ? loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : !error && <ManagementDashboard lines={filtered} onPurchases={() => navigate('history')} onSupplier={supplierPurchases} onItem={itemPurchases} onPurchase={setPurchase} /> : <section className={`records-panel${mode === 'history' ? ' purchase-records' : ''}`}>
           <div className="panel-heading"><div><h2>{mode === 'reports' ? 'Purchase summaries' : mode === 'suppliers' ? 'Supplier spending' : 'Purchase history'}</h2><p>{period}{query || supplier ? ' · Filtered' : ' · All purchases'}</p></div>{actions}</div>
-          <div className="filters data-filters">{mode !== 'suppliers' && <label className="filter-label search-filter"><span>Item search</span><span className="search-field"><Search size={17} aria-hidden="true" /><input aria-label="Search items" placeholder="e.g. Cooking Oil" value={query} onChange={e => setQuery(e.target.value)} /></span></label>}{mode !== 'suppliers' && <label className="filter-label"><span>Supplier</span><select aria-label="Filter suppliers" value={supplier} onChange={e => setSupplier(e.target.value)}><option value="">All suppliers</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>}<label className="filter-label"><span>Purchase month</span><input type="month" value={month} disabled={allDates} onChange={e => { if (e.target.value) setMonth(e.target.value); }} /></label>{mode === 'history' && <label className="check-label"><input type="checkbox" checked={allDates} onChange={e => setAllDates(e.target.checked)} />All dates</label>}{(query || supplier || allDates) && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}</div>
-          {loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : error ? <div className="empty"><p>Unable to load records. Please try again.</p></div> : !filtered.length ? <div className="empty"><span className="empty-icon"><ShoppingBasket size={28} /></span><h3>{query || supplier ? 'No matching purchases' : 'No purchases in this period yet'}</h3><p>{query || supplier ? 'Try another item name, supplier or month.' : management ? 'Staff purchases will appear here after they are saved.' : 'Add your first invoice to start tracking purchases.'}</p>{query || supplier ? <button className="secondary" onClick={clearFilters}>Clear filters</button> : <button className="secondary" onClick={() => navigate('entry')}><Plus size={16} />{management ? 'Open staff workspace' : 'Add your first purchase'}</button>}</div> : mode === 'reports' ? <Reports lines={filtered} tab={reportTab} onTab={setReportTab} onItem={itemPurchases} /> : mode === 'suppliers' ? <SupplierOverview lines={filtered} onSupplier={supplierPurchases} /> : <><PurchaseHistory lines={filtered.slice(page * 50, page * 50 + 50)} onPurchase={line => setPurchase(lines.filter(item => item.purchase_id === line.purchase_id))} /><div className="table-footer"><span>Lines: {filtered.length} · Invoices: {invoiceCount}</span><div className="pagination"><button className="text-button" disabled={page === 0} onClick={() => setPage(v => v - 1)}>Previous</button><span>{Math.min(page + 1, Math.ceil(filtered.length / 50))} / {Math.ceil(filtered.length / 50)}</span><button className="text-button" disabled={(page + 1) * 50 >= filtered.length} onClick={() => setPage(v => v + 1)}>Next</button></div></div></>}
+          <div className="filters data-filters">{mode==='history' && <label className="filter-label">Status<select aria-label="Purchase status" value={purchaseStatus} onChange={e=>setPurchaseStatus(e.target.value)}><option value="active">Active</option><option value="voided">Voided</option><option value="all">All</option></select></label>}{mode !== 'suppliers' && <label className="filter-label search-filter"><span>Item search</span><span className="search-field"><Search size={17} aria-hidden="true" /><input aria-label="Search items" placeholder="e.g. Cooking Oil" value={query} onChange={e => setQuery(e.target.value)} /></span></label>}{mode !== 'suppliers' && <label className="filter-label"><span>Supplier</span><select aria-label="Filter suppliers" value={supplier} onChange={e => setSupplier(e.target.value)}><option value="">All suppliers</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>}<label className="filter-label"><span>Purchase month</span><input type="month" value={month} disabled={allDates} onChange={e => { if (e.target.value) setMonth(e.target.value); }} /></label>{mode === 'history' && <label className="check-label"><input type="checkbox" checked={allDates} onChange={e => setAllDates(e.target.checked)} />All dates</label>}{(query || supplier || allDates || purchaseStatus!=='active') && <button className="text-button clear-filters" onClick={clearFilters}>Clear filters</button>}</div>
+          {loading ? <div className="empty"><Spinner /><p>Loading purchases…</p></div> : error ? <div className="empty"><p>Unable to load records. Please try again.</p></div> : !filtered.length ? <div className="empty"><span className="empty-icon"><ShoppingBasket size={28} /></span><h3>{query || supplier ? 'No matching purchases' : 'No purchases in this period yet'}</h3><p>{query || supplier ? 'Try another item name, supplier or month.' : management ? 'Staff purchases will appear here after they are saved.' : 'Add your first invoice to start tracking purchases.'}</p>{query || supplier ? <button className="secondary" onClick={clearFilters}>Clear filters</button> : <button className="secondary" onClick={() => navigate('entry')}><Plus size={16} />{management ? 'Open staff workspace' : 'Add your first purchase'}</button>}</div> : mode === 'reports' ? <Reports lines={filtered} tab={reportTab} onTab={setReportTab} onItem={itemPurchases} /> : mode === 'suppliers' ? <SupplierOverview lines={filtered} onSupplier={supplierPurchases} /> : <><PurchaseHistory lines={filtered.slice(page * 50, page * 50 + 50)} onPurchase={line => setPurchase(lines.filter(item => item.purchase_id === line.purchase_id))} /><div className="table-footer"><span>Lines: {filtered.length} · Active invoices: {invoiceCount}</span><div className="pagination"><button className="text-button" disabled={page === 0} onClick={() => setPage(v => v - 1)}>Previous</button><span>{Math.min(page + 1, Math.ceil(filtered.length / 50))} / {Math.ceil(filtered.length / 50)}</span><button className="text-button" disabled={(page + 1) * 50 >= filtered.length} onClick={() => setPage(v => v + 1)}>Next</button></div></div></>}
         </section>}
         {!loading && !error && itemTotals.length > 0 && <p className="page-note"><ShieldCheck size={15} />{management ? 'Shared restaurant records' : 'Your purchase records'} · Refreshes every minute. Use refresh to check for new purchases.</p>}
       </>}
       <footer className="footer"><span>Restaurant Ledger · {management ? 'Management workspace' : 'Staff workspace'}</span><span>MYR · Malaysia</span></footer>
-    </div></main>{purchase && <PurchaseDetails lines={purchase} onClose={() => setPurchase(null)} />}
+    </div></main>{purchase && <PurchaseDetails key={purchase[0].purchase_id} lines={purchase} manager={management} onBusy={setSaving} onDirty={setDirty} onChanged={refresh} onClose={() => {setPurchase(null);setDirty(false);}} />}
   </div>;
 }
 
