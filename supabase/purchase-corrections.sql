@@ -35,7 +35,46 @@ revoke update,delete on public.suppliers,public.items from authenticated;
 -- Existing functions already validate the caller, own creator, original payload,
 -- immutable photo path and stored object. Run with owner privileges after revoke.
 alter function public.restaurant_save_purchase(uuid,date,text,text,text,jsonb) security definer;
-alter function public.restaurant_save_purchase_with_receipt(uuid,date,text,text,text,jsonb,text) security definer;
+create or replace function public.restaurant_save_purchase_with_receipt(
+  p_id uuid, p_date date, p_supplier text, p_invoice text, p_notes text,
+  p_lines jsonb, p_receipt_path text
+)
+returns uuid language plpgsql security definer set search_path = ''
+as $receipt_save$
+declare
+  v_purchase uuid;
+  v_previous text;
+begin
+  if not public.restaurant_is_active() then raise exception 'Account is not active' using errcode='42501'; end if;
+  -- A photo can be linked only during first creation, never attached later to
+  -- an already saved invoice. Retrying an existing identical link is safe.
+  if exists(select 1 from public.purchases where id=p_id and created_by=auth.uid() and receipt_path is null) then
+    raise exception 'Receipt cannot be attached to an already saved purchase' using errcode='22023';
+  end if;
+  if not public.restaurant_is_active() then
+    raise exception 'Account is not active' using errcode = '42501';
+  end if;
+  if p_receipt_path is null or p_id is null or p_receipt_path !~ (
+    '^' || auth.uid()::text || '/' || p_id::text || '/[0-9a-f-]{36}[.]jpg$'
+  ) then
+    raise exception 'Invalid receipt path' using errcode = '22023';
+  end if;
+  v_purchase := public.restaurant_save_purchase(p_id, p_date, p_supplier, p_invoice, p_notes, p_lines);
+  select receipt_path into v_previous from public.purchases
+    where id = v_purchase and created_by = auth.uid() for update;
+  if v_previous is not null and v_previous is distinct from p_receipt_path then
+    raise exception 'Invoice already saved with a different receipt' using errcode = '22023';
+  end if;
+  update public.purchases set receipt_path = p_receipt_path
+    where id = v_purchase and created_by = auth.uid();
+  if not exists (select 1 from storage.objects
+    where bucket_id = 'restaurant-receipts' and name = p_receipt_path
+      and metadata->>'mimetype' = 'image/jpeg') then
+    raise exception 'Receipt upload not found' using errcode = '22023';
+  end if;
+  return v_purchase;
+end;
+$receipt_save$;
 
 -- Block even the original photo RPC from attaching a new photo after a correction.
 create or replace function public.restaurant_preserve_purchase_origin()

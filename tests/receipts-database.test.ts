@@ -91,6 +91,13 @@ for (const upgraded of [false,true]) test(`private receipts enforce account scop
       await db.exec(read('purchase-corrections.sql'));
       await asUser(manager,async()=>{await run("select restaurant_resolve_purchase(gen_random_uuid(),$1,1,'voided','Duplicate receipt',null,null)",[id]);});
       await asUser(staff,async()=>{await save(id,path);assert.equal((await run('select status from purchases'))[0].status,'voided');assert.deepEqual((await run('select name from storage.objects')).map(o=>o.name),[path]);});
+      await asUser(staff,async()=>{
+        const withoutPhoto='10000000-0000-4000-8000-000000000099';
+        await run('select restaurant_save_purchase($1,$2,$3,$4,$5,$6::jsonb)',[withoutPhoto,'2026-10-16','Supplier',null,null,lines]);
+        const latePath=`${staff}/${withoutPhoto}/${photo}.jpg`;await upload(latePath);
+        await assert.rejects(save(withoutPhoto,latePath),/already saved/);
+        assert.equal((await run('select receipt_path from purchases where id=$1',[withoutPhoto]))[0].receipt_path,null);
+      });
     }
     assert.equal((await run('select * from purchases'))[0].receipt_path, path);
     assert.equal((await run("select public from storage.buckets where id='restaurant-receipts'"))[0].public, false);
